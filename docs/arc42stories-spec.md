@@ -23,6 +23,42 @@ These are not cosmetic additions. They reflect a fundamental shift in how softwa
 
 ---
 
+## Diagrams — C4 with Mermaid
+
+Arc42Stories uses the [C4 Model](https://c4model.com) for visual hierarchy, rendered as [Mermaid](https://mermaid.js.org) diagrams. Mermaid renders natively on GitHub, works inline in `.md` files, and requires no external tooling.
+
+**Four diagram types, used in specific sections:**
+
+| C4 level | Mermaid type | Used in |
+|---|---|---|
+| System Context | `C4Context` | §3 Context and Scope |
+| Container | `C4Container` | §5 Building Block View |
+| Component | `C4Component` | §5 per-layer detail; §9.3 Chapter entries |
+| Dynamic | `C4Dynamic` | §6 Runtime View; §9.3 Chapter flows |
+
+**Minimal example:**
+````markdown
+```mermaid
+C4Container
+  title PR Review System — Container View
+  Person(dev, "Developer", "Submits a PR")
+  System_Boundary(app, "devtown") {
+    Container(api, "Review API", "Quarkus REST", "POST /api/reviews")
+    Container(engine, "Case Engine", "casehub-engine", "Opens CasePlanModel instance")
+    ContainerDb(db, "Work DB", "H2 / PostgreSQL", "WorkItems, SLA records")
+  }
+  Rel(dev, api, "POST /api/reviews", "HTTPS")
+  Rel(api, engine, "startCase()")
+  Rel(engine, db, "WorkItem CRUD")
+```
+````
+
+**In Chapter entries:** use `C4Component` filtered to elements involved in that Chapter. Colour convention: new elements green (`$tags="new"`), modified yellow (`$tags="modified"`).
+
+**Layout note:** Mermaid's C4 auto-layout can be hard to control for large diagrams. Keep diagrams focused — one Chapter, one layer, or one flow. For large systems, prefer multiple small diagrams over one comprehensive one. For production-grade diagrams requiring precise layout, PlantUML + [C4-PlantUML](https://github.com/plantuml-stdlib/C4-PlantUML) is the alternative.
+
+---
+
 ## Core Concepts
 
 | Term | Definition |
@@ -136,7 +172,14 @@ Navigable summary of all Chapters in delivery sequence. Link each Chapter name t
 |---|---|---|---|---|---|
 | 1 | [Name] | [Journey] | L1, L3 | Low, High | ✅ |
 | 2 | [Name] | [Journey] | + L2 | Medium | 🔲 |
+
+**Sequencing rationale:**
+- C1 before C2: [hard dependency — C1 provides X that C2 requires at runtime]
+- C2 before C3: [soft ordering — C2 generates Y that makes C3 meaningful]
+- C3 and C4 independent: [minimal delta — C3 adds one layer vs C4's three]
 ```
+
+The sequencing rationale lives here — adjacent to the Chapter Index — not only in §4. A reader scanning the index sees *why* things are ordered this way without jumping to another section. §4 Solution Strategy summarises the overall delivery approach; §9.2 holds the per-Chapter rationale.
 
 #### §9.3 Chapter Entries
 
@@ -149,6 +192,9 @@ One entry per Chapter, in delivery sequence.
 **Sequence:** N of M
 **Status:** ✅ complete / 🔲 pending / 🚧 in progress
 **Delivered:** [date or sprint]
+**Issues:** [issue tracker refs — e.g. org/repo#N]
+**Navigation:** `git log --grep="#N" --oneline`
+**Blog:** [session blog entry capturing the narrative — e.g. blog/YYYY-MM-DD-title.md]
 
 **Purpose and business value**
 [1–2 paragraphs: what this Chapter delivers and why it matters]
@@ -187,9 +233,14 @@ One entry per layer integrated, in reading order (learning progression — not d
 ```markdown
 ### Layer — [Name]
 
-**Participates in chapters:** C2, C3, C4
-**Architectural patterns:** [pattern names — Hexagonal, Clean, DDD, Event-Driven, ...]
-**Key protocols / standards:** [references]
+**Participates in chapters:** C2, C3, C4, C5
+**Architectural patterns:** [names from your architectural patterns reference — e.g. Hexagonal, Clean, DDD, Event-Driven, CQRS-lite, Strategy, Registry, Observer]
+**Key protocols:** [governing rules and standards — e.g. flyway-migration-rules.md, module-tier-structure.md]
+**Design refs:** [design specs, analysis docs, brainstorm outputs — separate from protocols; e.g. docs/specs/YYYY-MM-DD-topic.md §Section, docs/comparison-analysis.md §Phase]
+**Issues:** [issue tracker refs]
+**Navigation:** `git log --grep="#N" --oneline`
+**Blog:** [session blog entry — e.g. blog/YYYY-MM-DD-title.md]
+**Completed:** [date or 🔲 pending]
 
 #### What it adds
 [Teaching narrative: what this layer introduces, what gap it closes relative to the
