@@ -325,6 +325,7 @@ One entry per layer integrated, in reading order (learning progression — not d
 **Issues:** [issue tracker refs]
 **Navigation:** `git log --grep="#N" --oneline`
 **Blog:** [session blog entry — e.g. blog/YYYY-MM-DD-title.md]
+**Improvement refs:** [improvements identified during this layer's implementation — e.g. docs/PROGRESS.md §DT-001–006, GitHub label `improvement`, Jira filter]
 **Completed:** [date or 🔲 pending]
 
 #### What it adds
