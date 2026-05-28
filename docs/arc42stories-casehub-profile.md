@@ -56,13 +56,13 @@ Arc42Stories for CaseHub produces one permanent document per application:
 
 | Artifact | Role | Location |
 |---|---|---|
-| Arc42Stories document | Permanent design record — §1–§13 | `design/DESIGN.md` in workspace |
-| `JOURNAL.md` | Per-epic working doc — feeds DESIGN.md at close | `design/JOURNAL.md` in workspace |
+| `ARC42STORIES.MD` | Permanent architecture record — §1–§13 | workspace root |
+| `design/JOURNAL.md` | Per-epic working doc — feeds ARC42STORIES.MD at close | workspace `design/` |
 | `HANDOFF.md` | Per-session continuity — immediate next action | workspace root |
 | `blog/` | Session narrative | workspace `blog/` |
 | `docs/specs/` | Pre-implementation brainstorm output | project repo |
 
-The Arc42Stories document (`design/DESIGN.md`) absorbs what were previously separate artifacts: `LAYER-LOG.md` (layer entries → §9.4), the Vertical Slice Index (Chapter Index → §9.2), and `DESIGN.md` (cross-cutting decisions → §10).
+`ARC42STORIES.MD` absorbs what were previously separate artifacts: `LAYER-LOG.md` (layer entries → §9.4), the Vertical Slice Index (Chapter Index → §9.2), and `DESIGN.md` (cross-cutting decisions → §10). Those files are retired when the migration to `ARC42STORIES.MD` is complete.
 
 ---
 

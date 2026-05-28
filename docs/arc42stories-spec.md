@@ -23,39 +23,124 @@ These are not cosmetic additions. They reflect a fundamental shift in how softwa
 
 ---
 
-## Diagrams — C4 with Mermaid
+## Diagrams — C4 Extension for Arc42Stories
 
-Arc42Stories uses the [C4 Model](https://c4model.com) for visual hierarchy, rendered as [Mermaid](https://mermaid.js.org) diagrams. Mermaid renders natively on GitHub, works inline in `.md` files, and requires no external tooling.
+Arc42Stories uses the [C4 Model](https://c4model.com) rendered as [Mermaid](https://mermaid.js.org). Mermaid renders natively on GitHub, works inline in `.md` files, and requires no external tooling.
 
-**Four diagram types, used in specific sections:**
+Arc42Stories extends C4 with three view types that arc42 does not define. These sit alongside the standard C4 views.
 
-| C4 level | Mermaid type | Used in |
+---
+
+### Standard C4 views (inherited from arc42)
+
+| View | Mermaid type | Section |
 |---|---|---|
-| System Context | `C4Context` | §3 Context and Scope |
-| Container | `C4Container` | §5 Building Block View |
-| Component | `C4Component` | §5 per-layer detail; §9.3 Chapter entries |
-| Dynamic | `C4Dynamic` | §6 Runtime View; §9.3 Chapter flows |
+| System Context | `C4Context` | §3 |
+| Runtime scenarios | `C4Dynamic` | §6 |
+| Deployment topology | `C4Deployment` | §7 |
 
-**Minimal example:**
+---
+
+### Arc42Stories C4 Extension
+
+#### View 1 — Layer Architecture View (`C4Container`)
+
+**Purpose:** shows all foundation layers as `Container_Boundary` groups. Reveals the horizontal stack — which components belong to which layer and how they relate.
+
+**Used in:** §5 Building Block View (once, for the whole system).
+
 ````markdown
 ```mermaid
 C4Container
-  title PR Review System — Container View
-  Person(dev, "Developer", "Submits a PR")
-  System_Boundary(app, "devtown") {
-    Container(api, "Review API", "Quarkus REST", "POST /api/reviews")
-    Container(engine, "Case Engine", "casehub-engine", "Opens CasePlanModel instance")
-    ContainerDb(db, "Work DB", "H2 / PostgreSQL", "WorkItems, SLA records")
+  title [App] — Layer Architecture
+  Person(user, "User", "Triggers the flow")
+  Container_Boundary(b1, "Layer: [Layer 1 name]") {
+    Container(c1a, "[Component]", "[Tech]", "[Responsibility]")
   }
-  Rel(dev, api, "POST /api/reviews", "HTTPS")
-  Rel(api, engine, "startCase()")
-  Rel(engine, db, "WorkItem CRUD")
+  Container_Boundary(b2, "Layer: [Layer 2 name]") {
+    Container(c2a, "[Component]", "[Tech]", "[Responsibility]")
+  }
+  Rel(user, c1a, "[action]")
+  Rel(c1a, c2a, "[interaction]")
 ```
 ````
 
-**In Chapter entries:** use `C4Component` filtered to elements involved in that Chapter. Colour convention: new elements green (`$tags="new"`), modified yellow (`$tags="modified"`).
+**Rules:**
+- One `Container_Boundary` per layer. Label it `Layer: [name]`.
+- Show only the components that exist in the current delivery state — add components as Chapters ship them.
+- Relationships show the integration paths between layers, not internal detail.
 
-**Layout note:** Mermaid's C4 auto-layout can be hard to control for large diagrams. Keep diagrams focused — one Chapter, one layer, or one flow. For large systems, prefer multiple small diagrams over one comprehensive one. For production-grade diagrams requiring precise layout, PlantUML + [C4-PlantUML](https://github.com/plantuml-stdlib/C4-PlantUML) is the alternative.
+---
+
+#### View 2 — Chapter View (`C4Component`)
+
+**Purpose:** filtered view showing only the elements a specific Chapter introduces or modifies. Makes the Chapter's Layer Impact table visual.
+
+**Used in:** each §9.3 Chapter entry.
+
+````markdown
+```mermaid
+C4Component
+  title Chapter N — [Name] (🟢 new · 🟡 modified · grey = context only)
+  Container_Boundary(b_layer, "Layer: [primary layer for this Chapter]") {
+    Component(c1, "🟢 [NewComponent]", "[Tech]", "Introduced in this Chapter")
+    Component(c2, "🟡 [ModifiedComponent]", "[Tech]", "Extended in this Chapter")
+  }
+  Container_Boundary(b_other, "Layer: [adjacent layer — context]") {
+    Component(c3, "[ExistingComponent]", "[Tech]", "Unchanged — shown for context")
+  }
+  Rel(c3, c1, "[interaction this Chapter adds]")
+  Rel(c1, c2, "[internal flow]")
+```
+````
+
+**Rules:**
+- 🟢 prefix on component name = new in this Chapter.
+- 🟡 prefix = modified/extended in this Chapter.
+- No prefix = existing, shown for context only. Omit if not needed for clarity.
+- Keep to the elements the Chapter actually touches. Do not show the full system.
+- Include one `Container_Boundary` per layer that this Chapter affects.
+
+---
+
+#### View 3 — Journey Map (Mermaid flowchart)
+
+**Purpose:** shows how Chapters chain together across a Journey — delivery status, sequencing, and dependencies. This is a delivery planning view, not a runtime view, so a flowchart is used rather than `C4Dynamic`.
+
+**Used in:** §9.1 Journey Overview.
+
+````markdown
+```mermaid
+flowchart LR
+  C1["C1: [Name]\n[Layers]"] --> C2["C2: [Name]\n[+ Layer]"]
+  C2 --> C3["C3: [Name]\n[+ Layer]"]
+  C3 --> C4["C4: [Name]\n[+ Layer]"]
+
+  style C1 fill:#90EE90,color:#000
+  style C2 fill:#90EE90,color:#000
+  style C3 fill:#FFD700,color:#000
+  style C4 fill:#D3D3D3,color:#000
+```
+````
+
+**Colour convention:**
+
+| Status | Fill colour | Meaning |
+|---|---|---|
+| ✅ Complete | `#90EE90` (light green) | Chapter shipped |
+| 🚧 In progress | `#FFD700` (yellow) | Chapter in active development |
+| 🔲 Pending | `#D3D3D3` (light grey) | Chapter not yet started |
+
+**Rules:**
+- Each node label: Chapter number + name + layers touched (abbreviated).
+- Arrows show sequential dependency or delivery order. Add a label when the dependency is non-obvious.
+- One flowchart per Journey.
+
+---
+
+### Layout guidance
+
+Mermaid's C4 auto-layout can be hard to control on large diagrams. Keep each diagram focused — one Chapter, one layer, or one flow. Prefer multiple small diagrams over one large one. For production-grade diagrams requiring precise layout control, [PlantUML + C4-PlantUML](https://github.com/plantuml-stdlib/C4-PlantUML) is the alternative.
 
 ---
 
@@ -293,17 +378,25 @@ Definitions of terms used in this document and in the domain.
 
 ---
 
+## The Arc42Stories Document
+
+The Arc42Stories document for an application is named **`ARC42STORIES.MD`** — all caps, at the project or workspace root, consistent with other prominent session-critical documents (`CLAUDE.md`, `HANDOFF.md`).
+
+This naming makes the standard explicit: any reader seeing `ARC42STORIES.MD` immediately knows the document follows this specification.
+
+---
+
 ## Session Lifecycle
 
-Arc42Stories is a living document. It grows with the system across development sessions.
+`ARC42STORIES.MD` is a living document. It grows with the system across development sessions.
 
 **Working document** (per epic or sprint): A `JOURNAL.md` or equivalent captures in-session reasoning, decisions made, and approaches rejected. This is ephemeral — it exists during the epic and is discarded after.
 
-**Permanent record** (this document): At epic close, two things are distilled from the working document:
-1. What was built → Chapter entry and layer entry updated
+**Permanent record** (`ARC42STORIES.MD`): At epic close, two things are distilled from the working document:
+1. What was built → Chapter entry and layer entry in §9 updated
 2. Cross-cutting decisions → §10 if not captured inline
 
-**Rule:** if something is worth remembering between sessions, it belongs in Arc42Stories. If it only mattered during the session, it belongs in the session narrative (blog, diary) or is discarded.
+**Rule:** if something is worth remembering between sessions, it belongs in `ARC42STORIES.MD`. If it only mattered during the session, it belongs in the session narrative (blog, diary) or is discarded.
 
 ---
 
