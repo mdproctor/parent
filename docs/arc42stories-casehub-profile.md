@@ -6,6 +6,33 @@ This Profile instantiates [Arc42Stories](arc42stories-spec.md) for CaseHub agent
 
 ---
 
+## CaseHub Artifact Schema
+
+Each CaseHub harness app uses this schema. Copy it into §1 of `ARC42STORIES.MD` and set the app-specific PREFIX.
+
+| Artifact type | Format | Example | Where it lives |
+|---|---|---|---|
+| Improvement log entry | `[PREFIX]-NNN` | `DT-042` | `docs/PROGRESS.md` |
+| Issue | `#NNN` or `casehubio/[repo]#NNN` | `#52`, `casehubio/devtown#52` | GitHub Issues |
+| Garden entry | `GE-YYYYMMDD-XXXXXX` | `GE-20260521-e39ad1` | `~/.hortora/garden/` |
+| Protocol | `PP-YYYYMMDD-XXXXXX` | `PP-20260522-f08b62` | `casehub-parent/docs/protocols/` |
+| ADR | `ADR-NNNN` | `ADR-0007` | `docs/adr/` |
+| Blog entry | `YYYY-MM-DD-[initials]NN-title` | `2026-05-19-mdp01-layer-5-lands` | workspace `blog/` |
+| Design spec | `YYYY-MM-DD-topic-design` | `2026-05-15-epic3-design` | `docs/specs/` |
+
+**PREFIX by app:**
+
+| App | PREFIX |
+|---|---|
+| casehub-devtown | `DT` |
+| casehub-aml | `AML` |
+| casehub-clinical | `CLI` |
+| casehub-life | `LIF` |
+| casehub-drafthouse | `DH` |
+| QuarkMind | `QM` |
+
+---
+
 ## CaseHub Foundation Layer Taxonomy
 
 Replace the generic Arc42Stories layer model with the CaseHub harness stack:

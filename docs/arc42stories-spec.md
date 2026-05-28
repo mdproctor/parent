@@ -155,8 +155,36 @@ Mermaid's C4 auto-layout can be hard to control on large diagrams. Keep each dia
 | **Accountability gap** | A formal requirement — compliance, audit, or user-visible — not met before this Chapter ships |
 | **Pattern to replicate** | Domain-agnostic numbered steps an LLM follows to implement the same layer in a different project |
 | **Profile** | A domain- or stack-specific instantiation of Arc42Stories (e.g. CaseHub Profile, Spring Boot Profile) |
+| **Project artifact schema** | A project-defined table mapping artifact types to their naming format — so cross-references throughout the document are unambiguous |
 
 **Naming note:** "Chapter" is used deliberately rather than "slice" to avoid confusion with [Vertical Slice Architecture](https://jimmybogard.com/vertical-slice-architecture/) — a code organisation pattern where source code is co-located by feature. Chapters are a documentation and delivery planning concept, not a code organisation pattern. The metaphor is the same — a vertical cut through horizontal layers — but the domain is different.
+
+---
+
+## Project Artifact Schema
+
+Every Arc42Stories document defines a small artifact naming schema — a table that maps artifact types to their naming format. Cross-references throughout the document use these formats. Any reader (human or LLM) can resolve a reference without ambiguity and without prior knowledge of the project.
+
+Define the schema in §1 Introduction and Goals, immediately after the project description.
+
+```markdown
+## Artifact Schema
+
+| Artifact type | Format | Example | Where it lives |
+|---|---|---|---|
+| Improvement log entry | `[PREFIX]-NNN` | `DT-042` | `docs/PROGRESS.md` |
+| Issue / work item | `#NNN` | `#52` | GitHub Issues |
+| Garden entry | `GE-YYYYMMDD-XXXXXX` | `GE-20260521-e39ad1` | `~/.hortora/garden/` |
+| ADR | `ADR-NNNN` | `ADR-0007` | `docs/adr/` |
+| Blog entry | `YYYY-MM-DD-title` | `2026-05-19-layer-5-lands` | `blog/` |
+| Design spec | `YYYY-MM-DD-topic` | `2026-05-15-epic3-design` | `docs/specs/` |
+```
+
+**Rules:**
+- The `PREFIX` in improvement log entries is project-specific. Choose a short, memorable abbreviation (e.g. `DT` for devtown, `AML` for AML, `CLI` for clinical). Use it consistently throughout the document.
+- All other format columns are suggestions — projects may use whatever format their tooling produces. The schema table is the declaration; the document follows it.
+- A Profile may define default schema conventions for its stack (e.g. the CaseHub Profile defines `GE-YYYYMMDD-XXXXXX` for garden entries).
+- Any reference in the document that matches a defined format is a navigable cross-reference. LLMs reading the document use the schema to resolve references without asking.
 
 ---
 
