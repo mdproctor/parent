@@ -336,9 +336,34 @@ previous layer, contrast with the before state]
 | Gap | What breaks without it | Closed by |
 |---|---|---|
 
+#### Key files
+[Specific files created or modified for this layer, with a one-line description of
+each. Not a code listing — a navigational index. An LLM uses this to locate the
+right entry points immediately without scanning the codebase.]
+
+- `path/to/File.java` — [what it is and what it does]
+- `path/to/AnotherFile.java` — [what it is and what it does]
+
 #### Key wiring
-[Non-obvious configuration not visible in code or official documentation.
-The things that trip people up. Format: what it is, why it's needed, where to set it.]
+[Non-obvious configuration not visible in code or official documentation —
+the HOW. The things that trip people up. Format: what it is, why it's needed,
+where to set it.]
+
+#### Architectural decisions
+[Layer-specific decisions — the WHY. Why this approach rather than the alternatives
+considered. Tradeoffs accepted. This is for decisions local to this layer; decisions
+that span multiple layers or are cross-cutting go in §10.]
+
+#### Pattern introduced
+[The named, referenceable pattern this layer establishes — one line. E.g.
+"@DefaultBean CDI displacement", "inner SPI composition via coordinator",
+"YAML → schema model → canonical API three-layer case definition".
+Used as a quick orientation anchor for readers and LLMs.]
+
+#### Pattern anchor
+[1-2 key reference points into the code: class name + method or file path.
+Not a code listing — a pointer. An LLM finding the pattern in the codebase
+starts here. E.g. `QhorusAmlInvestigator.dispatch()`, `pr-review.yaml §goals`]
 
 #### Gotchas
 [What went wrong; what would go wrong without prior knowledge.
