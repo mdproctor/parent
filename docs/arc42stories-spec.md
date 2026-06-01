@@ -262,7 +262,7 @@ Infrastructure, hosting, and deployment topology.
 
 System-wide patterns — security, observability, error handling, coding conventions. Reference external protocol documents rather than duplicating them here.
 
-**Anti-patterns belong here.** Include a concise anti-patterns subsection covering the failure modes most likely when extending this system. Use Symptom → Cause → Fix format (consistent with Gotchas in §9.4). Do not merely reference an external document — if the anti-pattern matters, the content belongs here. A reader with only ARC42STORIES.MD in context will not follow external references.
+**Anti-patterns belong here.** Include a concise anti-patterns subsection covering the failure modes most likely when extending this system. Use Symptom → Cause → Fix format (consistent with Gotchas in §9.4). Do not merely reference an external document — if the anti-pattern matters, the content belongs here. Actionable content buried in a referenced document costs a context switch, can drift independently from this document, and is less likely to surface during a scan. Self-contain what a reader must act on; reference only for depth and authority.
 
 ---
 
@@ -435,6 +435,65 @@ Only decisions not captured inline elsewhere. Arc42's rule applies directly: if 
 ### §13 Glossary
 
 Definitions of terms used in this document and in the domain.
+
+---
+
+## Writing Style
+
+ARC42STORIES.MD is a multi-mode document. Each section type has a declared mode
+that determines its structural constraints. Write to the mode, not to prose instinct.
+
+Constraint sets for each mode live in the `write-content` skill (`modes/` directory).
+When using the skill, it loads the correct mode file automatically. When writing
+without the skill, apply the structural rules below directly.
+
+### Mode map
+
+| Section | Mode | Structural constraint |
+|---|---|---|
+| §1–3 Introduction, Constraints, Context | Reference/lookup | Tables and bullets; no prose narrative |
+| §4 Solution Strategy | Explanation/comparative | Before:/After: or named-contrast structure; bullets for what changes |
+| §5 Building Block View | Reference/lookup | Tables and diagrams; one-line descriptions per component |
+| §6 Runtime View | Explanation/comparative | Scenario as sequence diagram + 1–2 sentences of prose framing only |
+| §7 Deployment View | Reference/lookup | Tables and diagrams; no prose narrative |
+| §8 Crosscutting pointer table | Reference/pointer | One row per concern; one-line description per reference |
+| §8 Anti-patterns | How-to/diagnostic | **Symptom:** → **Cause:** → **Fix:** labels; Fix is exact action, not direction |
+| §9.1–9.2 Journey + Chapter Index | Reference/lookup | Tables and flowchart; no prose narrative |
+| §9.3 "What this delivers" | Explanation/comparative | 2–3 sentences; user-visible outcome only; Before implicit, After explicit |
+| §9.4 Key files | Reference/inventory | `path/to/File.java` — one sentence: what it is and what it does |
+| §9.4 Key wiring | Reference/lookup | **Bold lead-in** (the fact) + 1–3 sentences (the reasoning); consequence stated |
+| §9.4 "What it adds" | Explanation/comparative | See below |
+| §9.4 Gotchas | How-to/diagnostic | **Symptom:** → **Cause:** → **Fix:** labels; Fix is exact action, not direction |
+| §9.4 Pattern to replicate | Tutorial | Numbered imperative steps; one action per step; domain-agnostic language |
+| §9.4 Architectural decisions | Argumentation/rationale | **Why X rather than Y:** reason. Tradeoff: what X costs. No hedging. |
+| §10 ADRs | Argumentation/decision | Context → Decision → Consequences; name the alternative considered |
+| §11–12 Quality/Risk tables | Reference/lookup | Tables only; no prose narrative |
+| §13 Glossary | Reference/lookup | Term — one-sentence definition; what it is, not what it's for |
+
+### "What it adds" — structural prescription
+
+This is the highest-risk section for prose drift. Apply these rules:
+
+**Before:** `[Previous state]` — what existed before this layer, in one clause.
+**After:** `[Component @Annotation]` — what displaced or extended it, in one clause.
+
+What this layer adds:
+- **[Named capability]** — [specific mechanism]; [what it prevents or enables]
+- **[Named capability]** — [specific mechanism]; [what it prevents or enables]
+
+Not closed here: [Layer N] ([what it still lacks]), [Layer M] ([what it still lacks]).
+
+**Rules:**
+- Lead with Before:/After: — no context-setting prose before the contrast
+- Each bullet names a capability, not a file. The mechanism follows the em dash.
+- "Not closed here" is mandatory — explicit scope boundary prevents inference
+- Hard length cap: 2–4 sentences of prose + bullets. If it needs more, the section is carrying reasoning that belongs in Architectural decisions.
+- No personal voice ("we found", "during implementation", "I discovered")
+- Active specific verbs: "displaces", "fires", "opens a CaseInstance" — not "is designed to", "allows for"
+
+### Anti-slop
+
+Apply `write-content/voice/anti-slop.md`. Mode-specific voice texture lives in each mode file. No additional rules here.
 
 ---
 
