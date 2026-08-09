@@ -1168,6 +1168,16 @@
         <artifactId>casehub-neocortex-rag-tracking</artifactId>
         <version>${casehub.version}</version>
       </dependency>
+      <dependency>
+        <groupId>io.casehub</groupId>
+        <artifactId>casehub-neocortex-rag-cache</artifactId>
+        <version>${casehub.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.casehub</groupId>
+        <artifactId>casehub-neocortex-rag-crossencoder</artifactId>
+        <version>${casehub.version}</version>
+      </dependency>
 
       <!-- ================================================================ -->
       <!-- quarkmind                                                        -->
