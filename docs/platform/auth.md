@@ -179,6 +179,53 @@ Use **Tier 1.5** for per-binding credentials until a secrets backend resolver is
 
 See protocol: [per-binding-credential-reference](https://github.com/casehubio/garden/blob/main/docs/protocols/casehub/per-binding-credential-reference.md)
 
+## Worker Authorization (Engine-Level)
+
+Privileged external workers with their own service-account identity get case-scoped credentials and auto-managed ACL grants. This is engine-level infrastructure built on top of `AccessControlProvider`.
+
+**Declaration surface** (on CaseDefinition YAML):
+
+```yaml
+workers:
+  - name: risk-agent
+    serviceAccountId: "agent:pool-risk@acme.io"
+    capabilities: [assess-risk]
+
+bindings:
+  - name: assess
+    capability: assess-risk
+    worker: risk-agent
+    permissionIntent:
+      - read-context
+      - signal-case
+      - read-event-log
+```
+
+`permissionIntent` declares what the worker needs. Default (when omitted): `[read-context]` — fail-closed for writes. `serviceAccountId` must resolve to `ActorType.AGENT`.
+
+**Credential lifecycle:**
+
+| Event | Action |
+|-------|--------|
+| Worker dispatched | `WorkerGrantOrchestrator.grantAndMint()` — creates ACL grants via `AccessControlProvider.grantBatch()`, mints scoped token, stores in `WorkerCredentialStore` |
+| REST request | `WorkerCredentialFilter` validates `X-Worker-Credential` header — 401 invalid/expired, 403 caseId mismatch (structural isolation) |
+| Worker completes | `revokeForWorker()` — differential revocation (safe for shared service accounts with concurrent bindings) |
+| Case terminal | `revokeForCase()` — sweep all surviving credentials |
+
+**Key types** (all in `casehub-engine`):
+
+| Type | Module | Purpose |
+|------|--------|---------|
+| `WorkerAction` | engine-api | 7 intent actions mapping to `AclAction` + `AclResourceType` |
+| `WorkerCredential` | engine-api | Record: token, actorId, caseId, actions, expiry |
+| `WorkerCredentialStore` | engine-common | SPI: store/lookup/revoke credentials |
+| `InMemoryWorkerCredentialStore` | engine-common | `@DefaultBean` — works out of the box |
+| `WorkerGrantOrchestrator` | engine runtime | Grant at dispatch, differential revoke at completion |
+| `WorkerCredentialFilter` | engine-rest | JAX-RS filter — structural case isolation |
+| `WorkerIdentityResolver` | engine runtime | Ephemeral minting vs service-account passthrough |
+
+**Identity modes:** Engine-minted ephemeral (`agent:worker-<caseId>-<shortUuid>`) for one-shot workers, or pre-declared service-account identity for stable workers. Ephemeral identities get full grant revocation on completion; service-account identities get differential revocation (only grants not needed by other concurrent bindings).
+
 ## Channel Write ACL
 
 `casehub-qhorus` enforces `allowed_writers` on `Channel` entities.
