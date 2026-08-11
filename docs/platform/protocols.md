@@ -40,6 +40,7 @@ These protocols apply when building domain-specific applications on the CaseHub 
 | [Per-binding credential reference](https://github.com/casehubio/garden/blob/main/docs/protocols/casehub/per-binding-credential-reference.md) | Tier 1.5: logical credential name in DB, resolved via `Config.getValue()`. Tier 2 secrets resolver deferred. |
 | [Reactive service build gating](https://github.com/casehubio/garden/blob/main/docs/protocols/casehub/reactive-service-build-gating.md) | Extensions gate reactive tier via `@IfBuildProperty(name="casehub.<module>.reactive.enabled")`. Default false. |
 | [Casehub dependency tier order](https://github.com/casehubio/garden/blob/main/docs/protocols/casehub/casehub-dependency-tier-order.md) *(link placeholder)* | Foundation repos depend on `casehub-platform-api` only. Orchestration depends on foundation. Integration depends on orchestration. |
+| [Demo SPI convention](demo-spi-convention.md) | Connector SPIs ship `@Alternative @Priority(300) @IfBuildProfile("demo")` demo impls. Pull: serve bootstrapped data. Push: inject via `/scenario/inject/{connector}`. Shared `DemoCurrentPrincipal` reads `X-Scenario-Actor`. |
 
 ### Universal Conventions
 

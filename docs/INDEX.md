@@ -42,6 +42,7 @@ Each repo owns its own `docs/guides/consumer-guide.md` and `docs/guides/contribu
 - [Privacy](platform/privacy.md) — GDPR erasure, PII sanitisation
 - [Persistence](platform/persistence.md) — Flyway conventions, datasource naming
 - [Observability](platform/observability.md) — OTel tracing, audit entries, ledger correlation
+- [Demo SPI Convention](platform/demo-spi-convention.md) — profile switching, pull/push demo impls, injection endpoints
 - [Scenario Format](platform/scenario-format.md) — YAML schema for scripted demos and automated verification
 - [Channels](CHANNELS.md) — purpose categories, discriminator dimensions
 - [UI Architecture](platform/ui-architecture.md) — pages → blocks-ui → app UI layering
