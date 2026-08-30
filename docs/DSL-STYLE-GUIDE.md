@@ -1,11 +1,52 @@
 # CaseHub DSL Style Guide
 
-How we design fluent Java APIs across the CaseHub platform, with reference to
-LangChain4j and Quarkus Flow as peer influences.
+How we design APIs across the CaseHub platform — Java DSL, annotations, and
+YAML — as a cohesive family with shared design principles.
 
 ---
 
-## Principles
+## YAML/Java Parity Principle
+
+Every execution model, configuration option, and composition pattern that can
+be expressed in Java should have an equivalent YAML surface. This is a platform
+principle, not a convenience feature.
+
+**Three pathways, one family:** pure YAML, pure Java (DSL + annotations), and
+hybrid. Each pathway is first-class — YAML is not a subset of Java, and Java is
+not a prerequisite for YAML. They are peer representations of the same models.
+
+**Why parity matters:**
+
+1. **Modeling-first design** — YAML definitions are the natural entry point for
+   designing case behavior before writing code. Full YAML coverage means the
+   entire design surface is accessible without a Java toolchain.
+2. **Non-technical accessibility** — domain experts, analysts, and less technical
+   team members can author and review case definitions directly. YAML's
+   readability makes this practical where Java DSL does not.
+3. **Interactive demo tutorials** — the pages platform builds slide-based demos
+   that walk through definitions. YAML definitions render directly in these
+   tutorials, enabling teach-by-example flows. This requires every execution
+   model to be expressible in YAML.
+4. **Cross-file navigation** — YAML definitions reference each other via
+   `definitionRef:` fields, enabling orthogonal drill-down across diagram types
+   (Case, SWF, HTN, DAG) in the UI workbench.
+
+**What parity means in practice:**
+
+- When adding a new Java builder field, add the corresponding YAML schema field
+  and mapper support in the same issue
+- When creating a new execution model or pattern, design the YAML surface
+  alongside the Java DSL — not as follow-on work
+- When writing examples, produce both Java and YAML variants
+- The exceptions are inherently programmatic: custom SPI implementations,
+  lambda functions, WorkerFunction bodies. Everything else should work in YAML.
+
+**Tracked in:** casehubio/engine#978 (epic: pure-YAML execution model examples
+and DSL completeness)
+
+---
+
+## Java DSL Principles
 
 1. **Code should read like a declaration, not a construction**
 2. **Pattern name is the entry point** — the first thing you read tells you what you're building
