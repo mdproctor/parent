@@ -19,17 +19,17 @@
 
 ### Data Architecture
 
-**DataSourceMixin** — Lit mixin for pull-based data loading (REST endpoints). Adds `endpoint`, `loading`, `error`, `dataSet` properties. Wraps `DataSourceAdapter` -> `DataSourceController` from pages-component, producing `TypedDataSet` via extraction pipeline. Used by: similarity-panel, compliance-summary, grouped-data-view, list-pane, routing-rationale.
+**DataSourceMixin** — Lit mixin for pull-based data loading (REST endpoints). Adds `endpoint`, `loading`, `error`, `dataSet` properties. Wraps `DataSourceAdapter` -> `DataSourceController`, producing `TypedDataSet` via extraction pipeline. **Canonical home: `@casehubio/pages-component`** — re-exported from blocks-ui-core for backward compatibility. Used by: similarity-panel, compliance-summary, grouped-data-view, list-pane, routing-rationale.
 
-Additional data-source exports from blocks-ui-core:
+Additional data-source exports (all canonical in `@casehubio/pages-data`, re-exported here):
 - `fetchSource(url, options)` — standalone fetch with TypedDataSet extraction
 - `createTypedFetchSource(options)` — factory for typed fetch sources
 - `EMPTY_DATASET` — empty TypedDataSet placeholder for initial state
-- `DatasetContract` — re-exported from `@casehubio/pages-data`, the contract type for dataset shapes
+- `DatasetContract` — the contract type for dataset shapes
 
-**TrendSourceMixin** — Lit mixin for time-series trend data. Adds trend endpoint, provides `TrendPoint[]` via `extractTrendPoints`. Used by trust-score-panel for sparkline trend lines.
+**TrendSourceMixin** — Lit mixin for time-series trend data. Adds trend endpoint, provides `TrendPoint[]` via `extractTrendPoints`. **Canonical home: `@casehubio/pages-component`**. Used by trust-score-panel for sparkline trend lines.
 
-**EventStreamController** — Lit `ReactiveController` for push-based data (SSE streams). Wraps `EventStream` from pages-data. Provides `latest`, `all`, and `status` (ConnectionStatus). Batches events by default. Connects/disconnects on host lifecycle.
+**EventStreamController** — Lit `ReactiveController` for push-based data (SSE streams). Wraps `EventStream` from pages-data. **Canonical home: `@casehubio/pages-component`**. Provides `latest`, `all`, and `status` (ConnectionStatus). Batches events by default.
 
 Components can use both — DataSourceMixin for initial load, EventStreamController for live updates.
 
@@ -60,42 +60,91 @@ Core shared utilities re-exported from pages and domain-specific to blocks-ui:
 
 **Tokens** (re-exported from pages-ui-tokens): `generateScale`, `SPACING_SCALE`, `TYPOGRAPHY`, `MOTION`, `RADIUS`, `ELEVATION_LIGHT`, `ELEVATION_DARK`, `DENSITY_COMPACT_OVERRIDES`, `applyTheme`, `registerTheme`, `getTheme`, `listThemes`.
 
-**Data source** (wrapping pages DataSourceController): `DataSourceMixin`, `DataSourceAdapter`, `fetchSource` + `FetchSourceOptions`, `createTypedFetchSource` + `TypedFetchOptions`, `EMPTY_DATASET`, `TrendSourceMixin`, `TrendPoint`, `extractTrendPoints`.
+**Data source** (re-exported from pages — canonical home is `@casehubio/pages-component` and `@casehubio/pages-data`): `DataSourceMixin`, `DataSourceAdapter`, `fetchSource` + `FetchSourceOptions`, `createTypedFetchSource` + `TypedFetchOptions`, `EMPTY_DATASET`, `TrendSourceMixin`, `TrendPoint`, `extractTrendPoints`.
 
-**Event stream**: `EventStreamController` (Lit ReactiveController for SSE).
+**Event stream** (re-exported from `@casehubio/pages-component`): `EventStreamController` (Lit ReactiveController for SSE).
 
-**Rendering**: `renderSparkline` + `SparklineOptions` (shared SVG sparkline), `renderPropertyTree` + `propertyTreeStyles` (recursive nested object renderer).
+**Rendering** (re-exported from `@casehubio/pages-ui-components`): `renderSparkline` + `SparklineOptions` (shared SVG sparkline), `renderPropertyTree` + `propertyTreeStyles` (recursive nested object renderer).
 
-**Domain types**: `TrustLevel`, `trustLevelFromScore(score)`, `CommitmentState` (7-state: OPEN/ACKNOWLEDGED/FULFILLED/FAILED/DECLINED/DELEGATED/EXPIRED), `CommitmentRecord`, `RawCommitment`, `commitmentStateCategory(state)`, `isTerminalCommitmentState(state)`, `toCommitmentRecord(raw)`, `toCommitmentMap(commitments)`, `StateCategory`.
+**Domain types**: `TrustLevel`, `trustLevelFromScore(score)`, `CommitmentState` (7-state: OPEN/ACKNOWLEDGED/FULFILLED/FAILED/DECLINED/DELEGATED/EXPIRED), `CommitmentRecord`, `RawCommitment`, `commitmentStateCategory(state)`, `isTerminalCommitmentState(state)`, `toCommitmentRecord(raw)`, `toCommitmentMap(commitments)`, `StateCategory`. Orchestration types (#111): `ExecutionState` (7 states), `ExecutionResult` (4 outcomes), `AgentRef`/`AgentResult`, `PatternType` (8 patterns), `ExecutionModel`, `FailurePolicy`, `AgentRetryPolicy`, `OrchestrationAuditEvent` (discriminated union payload), `ExecutionSnapshot`.
 
-**UI components**: `BlocksConfirmDialog` (`<blocks-confirm-dialog>`, FocusTrapMixin, danger/success/neutral variants), `CommitmentStatePill` (`<commitment-state-pill>`, promoted from commitment-viz in #101), `stateCategoryStyles` + `CategoryStyle`.
+**Status registry** (#109): `StatusDescriptor`, `StateCategory`, `lookupStatus(domain, state)`, `registerStatus(domain, state, descriptor)`, `FALLBACK_DESCRIPTOR`. 13 built-in domains (case, task, workitem, work, milestone, outcome, group, sla, node, session, commitment, execution, agent, pattern) with cross-domain defaults. Extend with `registerStatus()` for new domains:
 
-**Utilities**: `SharedTimerController` (`subscribe`/`unsubscribe`), `pulseAnimation` CSS, `DatasetContract` (re-exported from pages-data).
+```typescript
+import { registerStatus } from '@casehubio/blocks-ui-core';
+registerStatus('myDomain', 'ACTIVE', { category: 'info', icon: '◉', pulse: true });
+```
+
+**UI components**: `StatusBadge` (`<status-badge>`, generic status pill for all domains — #109), `PagesConfirmDialog` (re-exported from `@casehubio/pages-ui-components` as `BlocksConfirmDialog` for backward compat), `CommitmentStatePill` (`<commitment-state-pill>`, deprecated — delegates to status-badge), `stateCategoryStyles` + `CategoryStyle`.
+
+**Utilities** (re-exported from pages): `SharedTimerController` (`subscribe`/`unsubscribe` from `@casehubio/pages-component`), `pulseAnimation` CSS (from `@casehubio/pages-ui-tokens`), `DatasetContract` (from `@casehubio/pages-data`).
 
 **Event helpers**: re-exported from pages-component (`emitPagesEvent`, `onPagesEvent`).
 
 ### graph-stencil-case (`packages/graph-stencil-case`)
 
 Case domain adapter for the visual diagram editor (epic #103). Exports:
-- `CaseAdapter` — implements `DomainAdapter<string>` from `@casehubio/graph-core`. `toGraph(yamlSource)` parses case definition YAML into `GraphModel`. `applyEdit(yamlSource, edit)` applies structural edits back to YAML. Currently stubbed.
-- `caseStencils` — array of `StencilDescriptor` objects defining the case domain grammar:
-  - **binding** — can be contained by worker, outbound to worker
-  - **worker** — container for bindings, connects to/from bindings
-  - **milestone** — connects from bindings/goals, outbound to bindings
-  - **goal** — terminal node (success/failure kind), inbound only
-  - **subcase** — sub-case reference (namespace/name/version), inbound only
-- `CaseDefinition` type
+- `toGraph(yaml)` → `AdapterResult { model: GraphModel, yamlPaths: Map }` — parses YAML into graph model with YAML path metadata for editing
+- `applyPropertyEdit(yaml, nodePath, field, value)` → new YAML string — CST-preserving property mutation
+- `addElement(yaml, elementType, defaults?)` → new YAML string — adds binding/worker/milestone/goal with generated defaults
+- `removeElement(yaml, nodePath)` → new YAML string — removes element by YAML path
+- `switchBindingTarget(yaml, bindingPath, targetType)` → new YAML string — switches binding target (capability/subCase/humanTask)
+- `registerCaseStencils()` — registers 5 stencil descriptors via pages `registerStencil()` (StencilDescriptor API with grammar, properties schema, render function) and 5 property schemas via `registerPropertySchema` (milestone, goal, subcase, binding, worker)
+- `registerThumbnailRenderer(type, renderer)` / `getThumbnailRenderer(type)` — ThumbnailRenderer SPI for worker node previews (SWF thumbnails registered by the hosting app)
+- `GitHubBackend` — `PersistenceBackend` implementation using GitHub Contents API
+- `toDecorations(state: CaseRuntimeState)` → `ReadonlyMap<string, NodeDecoration>` — pure function mapping runtime state to visual decorations. PlanItem aggregation uses active-worst-first priority per binding; milestones map 1:1.
+- `toDecoration(domain, state)` → `NodeDecoration` — single-state decoration via status registry (#109). Used internally by `toDecorations`; also available for custom domain decorations. `BADGE_COLORS` provides raw hex per `StateCategory`.
+- Types: `CaseRuntimeState` (with optional `caseStatus`), `PlanItemSnapshot`, `MilestoneSnapshot`, `TaskStatus` (9 states), `MilestoneLifecycleStatus` (3 states)
+- `CaseDefinition` type (generated from CaseDefinition.yaml JSON Schema)
 
-Each stencil defines grammar rules (containment, connection min/max/allowedFrom/allowedTo) and JSON Schema property definitions.
+Each stencil's render function accepts `(node: GraphNode, decoration?: NodeDecoration)` → `StencilTemplate`. Decorations are rendered by the pages graph-renderer; OBSOLETE status additionally applies reduced opacity inside the stencil render function.
+
+### diagram-core (`packages/diagram-core`)
+
+Shared diagram orchestration extracted from casehub-diagram (#106). Exports:
+- `DiagramBaseMixin(LitElement)` — Lit mixin owning undo/redo, render pipeline (`_fullRender`/`_updateWithoutLayout`), dirty tracking, persistence (`_load`/`_save`), keyboard shortcuts, selected node state, mode toggle, `src` fetch with AbortController, error/degraded/readonly modes. Subclasses implement 4 abstract methods: `_adaptYaml`, `_applyPropertyEdit`, `_paletteTypes`, `_emptyTemplate`.
+- `registerPropertySchema(nodeType, schema)` / `getPropertySchema(nodeType)` — schema registry (Map-based). `_updateSelectedNode()` uses registry lookup. Each stencil package registers schemas in its `register*Stencils()` function.
+- `DiagramToolbar` — base toolbar (save/dirty indicator)
+- `DiagramProperties` — generic schema-driven property panel with `renderPropertyForm`
+- Custom editor stubs: `BlocksPromptEditorElement` (textarea), `BlocksJsonEditorElement` (readonly JSON display) — for `x-editor-component` fields
+- Form utilities: `fieldTypeFor`, `validateField`, `renderNestedGroup`, `renderTriggerEditor`
 
 ### graph-stencil-swf (`packages/graph-stencil-swf`)
 
-Serverless Workflow (SWF) domain adapter for the visual diagram editor (epic #103). Exports:
-- `SwfAdapter` — implements `DomainAdapter<string>`. Uses `@openworkflowspec/sdk` for SWF YAML parsing. Currently stubbed.
-- `swfStencils` — array of `StencilDescriptor` objects:
-  - **swf-call** — function call node, outbound to call/switch/raise/exit
-  - **swf-switch** — conditional branch, multiple outbound connections
-  - (TODO: raise, catch, entry, exit stencils)
+SWF domain adapter for the visual diagram editor (#106). Uses `@openworkflowspec/sdk`. Exports:
+- `toSwfGraph(yaml)` → `AdapterResult { model, yamlPaths, degraded? }` — dual YAML walk (SDK `buildFlatGraph` + YAML CST path walker), type prefixing (`swf-*`), integrity assertion
+- `applySwfPropertyEdit(yaml, nodePath, field, value)` → new YAML string — CST-preserving via `yaml` library
+- `registerSwfStencils()` — registers 10 typed stencils (call with sub-type icons, set, switch, raise, try, try-catch, start, end, entry, exit) + generic fallback, 2 edge types (flow, switch-case)
+- `swfTaskSchema` — static JSON Schema for SWF task types with x-group/x-order/x-visibility annotations (CallTask, SetTask, SwitchTask, RaiseTask, TryTask, TryCatchTask). Registered per-$def via `registerPropertySchema` in `registerSwfStencils()`.
+- `createSwfThumbnailRenderer()` — SVG thumbnail renderer with layout caching
+- `wrapDoBlock(doBlock)` — wraps a `do:` array into a minimal SWF document envelope
+- `SWF_KNOWN_TYPES`, `SYNTHETIC_TYPES`, `SWF_TYPE_PREFIX` — type constants
+
+### graph-stencil-htn (`packages/graph-stencil-htn`)
+
+HTN/DAG domain adapter for the DAG execution viewer and decomposition tree (epic #107). Exports:
+- `dagToGraph(plan)` → `DagAdapterResult { model, entryNodeIds, exitNodeIds, taskIdToGraphNodeId }` — converts `DagPlanSnapshot` to `GraphModel` with topology metadata
+- `dagToDecorations(result)` → `ReadonlyMap<string, NodeDecoration>` — maps `DagResultSnapshot` node states to decorations via `node:` status domain (#109)
+- `nodeStatesToTaskStates(plan, result)` → `Record<string, NodeStateSnapshot>` — re-keys DagNode states by taskId for the decomposition tree
+- `registerHtnStencils()` — registers the `dag-node` stencil via pages `registerStencil()` (join indicators, executor badges, dimmed opacity for Skipped/Cancelled)
+- `toDecoration(domain, state)` → `NodeDecoration` — local duplicate of graph-stencil-case's decoration function (parallel packages, no cross-dependency)
+- Types: `TaskNodeSnapshot` (LeafTask/CompoundTask), `DecompositionSnapshot`, `DagPlanSnapshot`, `DagNodeSnapshot`, `DagResultSnapshot`, `NodeStateKind` (6 variants), `PlanItemDefinition` (Primitive/Compound), `CasePlanModelSnapshot`
+
+### blocks-dag-viewer (`components/blocks-dag-viewer`)
+
+Read-only DAG execution graph viewer. Wraps `pages-graph-canvas` with ELK layout. Property-based data delivery (`dagPlan`, `dagResult`, `dispatchMode`). Toolbar with dispatch mode badge, summary stats, staleness timer. Decoration-only update path skips ELK when only `dagResult` changes. Node selection via `selectionTopic` with `taskId` payload for tree ↔ DAG coordination.
+
+### blocks-decomposition-tree (`components/blocks-decomposition-tree`)
+
+HTN decomposition tree — recursive ARIA tree for `CompoundTask → DecompositionMethod → children`. 8 strategy badge colours + unknown fallback, guard label display, `selectedMethodIndex` highlighting, `nodeStates`-driven status badges on leaves. Render callbacks (`renderLeaf`, `renderMethod`) per component-customisation protocol. Shared `selectionTopic` with DAG viewer for coordination.
+
+### blocks-plan-item-tree (`components/blocks-plan-item-tree`)
+
+PlanItemDefinition tree — recursive ARIA tree for Primitive/Compound plan item hierarchy. `CompletionSemantics` badges (All/M-of-N/FirstWins), `DispatchMode` pills (ORCHESTRATED/CHOREOGRAPHED), repeatable indicators, entry condition display. Render callbacks (`renderPrimitive`, `renderCompound`).
+
+### blocks-plan-model-dashboard (`components/blocks-plan-model-dashboard`)
+
+CasePlanModel dashboard — card-based grid layout showing agenda (table with status badges), focus area with rationale, resource budget key-value pairs, sub-case list with case status, compound definition progress bars. Consumes `CasePlanModelSnapshot` as a single property.
 
 ### split-workbench (`components/split-workbench`)
 
@@ -208,6 +257,34 @@ Session detail — tabbed detail pane for a selected session: Terminal (polling 
 ### session-workbench (`components/session-workbench`)
 
 Session workbench — composition shell for session management. Composes session-list + session-detail in split-workbench with `selection-topic="session"`. `KeyboardShortcutMixin` for overlay. `configure()` method for hostPanel integration.
+
+### conversation-viewer (`components/conversation-viewer`)
+
+Conversation protocol viewer — five Lit components for structured deliberation. Extends `KeyboardShortcutMixin(LiveRegionMixin(LitElement))` for the workbench. Property-based data delivery (`ConversationState` as a single reactive property). All events use `emitPagesEvent` with colon-delimited topics (`${selectionTopic}:selected`/`:deselected`).
+
+Domain types live in `blocks-ui-core` (`types/conversation.ts`): `EpistemicStatus`, `ConvergenceState`, `ConvergenceSignal`, `CommonGroundState`, `GroundedFact`, `ConversationPoint`, `ConversationEntry`, `SubTaskFinding`, `FlagEntry`, `RoundMemo`, `ObligationChain`, `ConversationState`. `TransitionRecord` promoted from commitment-viz to `blocks-ui-core` (`types/commitment.ts`).
+
+Status registrations (`conversation` and `epistemic` domains) execute at module scope in `index.ts` as top-level side effects.
+
+Workbench internals: `_selectedPointId` tracks selection. `willUpdate` derives `_selectedPoint`, filtered findings/flags/obligations by point ID. Stale selection guard clears `_selectedPointId` and emits deselection when the selected point disappears from `conversationState`. Right pane swaps between `blocks-point-detail` (selected) and `blocks-common-ground-panel` (deselected).
+
+Extension points per PP-20260713-8ea1af: `renderPoint`, `renderEntry`, `renderFact` callbacks with inline styles. Generalization path for document-workbench tracked as #117.
+
+### casehub-diagram (`components/casehub-diagram`)
+
+Visual diagram editor for CaseDefinition YAML. Orchestrates graph-stencil-case adapter + stencils, pages `<pages-graph-canvas>` rendering, ELK auto-layout. Sub-elements: `casehub-diagram-toolbar` (save/dirty/mode toggle/staleness), `casehub-diagram-palette` (add nodes), `casehub-diagram-properties` (schema-driven property editing, binding target switching).
+
+**Runtime overlay internals:** `runtimeState` property triggers decoration flow. On change: `toDecorations(runtimeState)` produces `Map<string, NodeDecoration>`, passed to `toReactFlowGraph(model, layout, decorations)`. Decoration-only updates (no YAML change) skip `computeElkLayout` — the `_updateWithoutLayout` path reuses the cached layout and applies fresh decorations. Full renders (YAML change) also include decorations when in runtime mode.
+
+Mode toggle (`_mode: 'design' | 'runtime'`): defaults to `'design'`. Reverts to `'design'` only when `runtimeState` is explicitly set to `null` (checked via `changedProperties.has('runtimeState')`) — not on transient absence during refetch.
+
+Staleness: `_staleSeconds` computed from `CaseRuntimeState.timestamp` vs `Date.now()`. Re-evaluated on each `runtimeState` update and mode change. No timer — intentionally freezes at last-known age if updates stop.
+
+Render guard: async `_fullRender` tracks `_renderInProgress` and `_pendingRenderYaml` to handle YAML changes during ELK layout computation. Same guard covers decoration changes during layout.
+
+### case-dependency-graph (`components/case-dependency-graph`)
+
+D3 force-directed graph of case relationships. Consumes `GraphModel` from graph-core. Three built-in relationship types (parent_child, supersedes, coordination) via the relationship type registry in blocks-ui-core — apps register additional types with `registerRelationshipType()`. Dual data mode (endpoint fetch or `graphData` property). Edge type filter toolbar with DOT export. Node click emits selection topic events. Render callbacks (`renderNode`, `renderTooltip`) for domain customisation. D3 modules: d3-force (simulation), d3-selection (SVG), d3-zoom (pan/zoom), d3-drag (node drag with force rebalance).
 
 ### document-workbench (`components/document-workbench`)
 

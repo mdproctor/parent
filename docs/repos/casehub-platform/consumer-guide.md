@@ -58,6 +58,13 @@ Each displaces its `@DefaultBean` mock automatically -- no exclusion config need
 | `casehub-platform-digest-inmem` | In-memory `DigestBuffer` |
 | `casehub-platform-digest-jpa` | JPA `DigestBuffer` -- drain via SELECT+DELETE in transaction |
 
+### YAML declaration primitives
+
+| Artifact | What it provides |
+|----------|------------------|
+| `casehub-platform-yaml-core` | Pure Java YAML primitives — `VariableResolver` (pluggable sources, deferred prefixes, `DeferredPrefixHandler`, `${each.*}` context), `ForEachExpander` (generic adapter, inline + named groups, `when` conditions, ID-keyed results), `Truthiness` (boolean string eval), `CsvParser` (typed columns). Module system: `YamlModule` (generic sections), `YamlModuleParameter` (typed constraints), `ParameterValidator` (collect-all), `ModuleExpander` (alias prefixing, import merging). JSON Schema fragments for composable YAML validation. Zero deps, J2CL-transpilable |
+| `casehub-platform-ts-core` | TypeScript execution SPI — `TsExecutor` interface with `evaluate(String)` and `evaluate(Path)` returning `TsEvalResult`. `NodeTsExecutor` (Node.js subprocess via `npx tsx`). Repos consuming TS-defined configurations depend on this for the executor SPI and build their own domain-specific processors |
+
 ### Data source and event streams
 
 | Artifact | What it provides |
@@ -75,11 +82,20 @@ Each displaces its `@DefaultBean` mock automatically -- no exclusion config need
 
 ### Agent infrastructure
 
+Callers inject `AgentProvider` — the `RoutingAgentProvider` dispatches to `AgentBackend` implementations by the `model` key on `AgentSessionConfig`. Add one or more backend modules to the classpath; the router discovers them automatically.
+
 | Artifact | What it provides |
 |----------|------------------|
-| `casehub-platform-agent-api` | `AgentProvider` SPI -- single-shot and multi-turn; `AgentEvent` sealed interface; `AgentMcpServer` (Stdio/Sse/Http); Mutiny only, no Quarkus |
-| `casehub-platform-agent-claude` | Claude CLI subprocess integration (autonomous agent) via Spring AI Community `claude-code-sdk` |
-| `casehub-platform-agent-langchain4j` | Bidirectional LangChain4j interop -- any `ChatModel` as `AgentProvider`, any `AgentProvider` as `ChatModel` |
+| `casehub-platform-agent-api` | `AgentProvider` + `AgentBackend` SPIs; `AgentRuntime` + `AgentProcess` (subprocess abstraction); `AgentEvent` sealed interface; `AgentMcpServer` (Stdio/Sse/Http); Mutiny only, no Quarkus |
+| `casehub-platform-agent-runtime` | `SubprocessRuntime` -- local process execution for CLI agent providers |
+| `casehub-platform-agent-router` | `RoutingAgentProvider` -- dispatches to `AgentBackend` implementations by `model` key. Config: `casehub.platform.agent.default-backend` |
+| `casehub-platform-agent-claude` | AgentBackend "claude" -- Claude CLI subprocess via `claude-code-sdk` |
+| `casehub-platform-agent-openai` | AgentBackend "openai" -- native OpenAI Java SDK with `prompt_cache_key` support |
+| `casehub-platform-agent-codex` | AgentBackend "codex" -- Codex CLI via `AgentRuntime` |
+| `casehub-platform-agent-gemini` | AgentBackend "gemini" -- native Google GenAI SDK with explicit caching |
+| `casehub-platform-agent-gemini-cli` | AgentBackend "gemini-cli" -- Gemini CLI via `AgentRuntime` |
+| `casehub-platform-agent-langchain4j` | AgentBackend "langchain4j" -- catch-all fallback; bidirectional LangChain4j interop |
+| `casehub-platform-agent-gate` | CDI `@Decorator` rate limiter -- wraps `RoutingAgentProvider` transparently |
 
 ### Access control
 
@@ -102,6 +118,16 @@ Each displaces its `@DefaultBean` mock automatically -- no exclusion config need
 | Artifact | What it provides |
 |----------|------------------|
 | `casehub-platform-preferences-editor` | REST API for preference writes + schema discovery + validation; `PreferenceValidator`; `InMemoryPreferenceSchemaRegistry` |
+
+### PDF generation
+
+| Artifact | What it provides |
+|----------|------------------|
+| `casehub-platform-pdf` | HTML-to-PDF conversion with PDF/A-2b conformance. `OpenHtmlToPdfGenerator` implements `PdfGenerator` SPI. Bundled Liberation Sans + Mono fonts for reproducible rendering. Classpath-activated — when absent, `NoOpPdfGenerator` returns `Optional.empty()` |
+
+**SPI:** `PdfGenerator.generateFromHtml(String html, PdfOptions options)` returns `Optional<byte[]>`.
+
+**PdfOptions:** `title`, `author`, `createdAt`, `reportType`, `conformance` (default `PdfAConformance.PDFA_2_B`). Use `PdfOptions.defaults()` for basic conversion.
 
 ---
 
@@ -159,6 +185,40 @@ SmallRye Config is for deployment configuration (DB URLs, pool sizes). `Preferen
 
 **PreferenceValidator:** Server-side validation against schema constraints. Validates type parsing (integer, number, boolean, duration) and constraint checking (`min`, `max`, `minLength`, `maxLength`, `pattern` regex, enum options). Constraint keys are constants in `PreferenceConstraintKeys`.
 
+**Registering preference schemas:** Each module registers its preference key metadata at startup so UIs can discover and render editors. Define `PreferenceKey<T>` constants in a keys class, then create an `@ApplicationScoped` registrar bean:
+
+```java
+@ApplicationScoped
+public class MyPreferenceRegistrar {
+    @Inject PreferenceSchemaRegistry registry;
+
+    void onStart(@Observes StartupEvent event) {
+        registry.register(PreferenceSchemaDescriptor.of(MyPreferenceKeys.RETENTION_DAYS)
+                .label("Retention (days)")
+                .description("Days to retain records before purge")
+                .constraints(Map.of(PreferenceConstraintKeys.MIN, 1, PreferenceConstraintKeys.MAX, 3650))
+                .build());
+    }
+}
+```
+
+`PlatformPreferenceRegistrar` in `platform/` is the canonical example — it registers 10 preference schemas (6 retention + engagement toggle + retry limit + digest retention + view cache TTL). Type is inferred from the key's `defaultValue` (`IntPreference` → `"integer"`, `BooleanPreference` → `"boolean"`). When `preferences-editor/` is on the classpath, `InMemoryPreferenceSchemaRegistry` captures registrations; otherwise `NoOpPreferenceSchemaRegistry` silently drops them.
+
+**Platform preference keys** (all namespace `casehub.platform`):
+
+| Key | Type | Default | Purpose |
+|-----|------|---------|---------|
+| `notification.retention-days` | integer | 90 | Days to retain read/dismissed notifications |
+| `notification.unread-retention-days` | integer | 365 | Days to retain unread notifications |
+| `acl.audit-retention-days` | integer | 365 | Days to retain ACL audit log entries |
+| `delivery.attempt-retention-days` | integer | 30 | Days to retain delivery attempts |
+| `delivery.failed-retention-days` | integer | 365 | Days to retain failed delivery attempts |
+| `delivery.engagement-retention-days` | integer | 90 | Days to retain engagement events |
+| `delivery.engagement-enabled` | boolean | false | Enable engagement event recording |
+| `delivery.retry-max-retries` | integer | 5 | Max retry attempts before delivery expiry |
+| `notification.digest-retention-days` | integer | 90 | Days to retain digest buffer entries |
+| `view.cache-ttl-seconds` | integer | 0 | View cache TTL (0 = disabled) |
+
 ### DataSource and Alpha Network
 
 Rete-style event routing: `DataSource<T>` ingests objects, `ObjectType<T>` discriminates by type, `FilterExpression<T>` evaluates predicates. Four `subscribe()` overloads with increasing specificity. Self-pruning deregistration lifecycle handles shutdown gracefully.
@@ -214,9 +274,19 @@ Domain modules produce `SubscribableEvent` objects into the notification DataSou
 
 **StringExpressionEvaluator:** Sub-interface of `ExpressionEvaluator` for string-based evaluators (carries `expression()` string). Concrete records: `JQExpressionEvaluator`, `MvelExpressionEvaluator`.
 
+### Signing
+
+`SigningProvider` SPI for cryptographic signing operations. `SignatureVerifier` for verification. `NoOpSigningProvider` `@DefaultBean` is a silent no-op. Real implementations plug in via CDI displacement.
+
+### SessionIsolator
+
+`SessionIsolator` SPI — virtual-thread-safe Hibernate session isolation. Wraps JPA calls that would otherwise fail on virtual threads due to Hibernate's thread-local session management. Use for any blocking JPA operations in `@RunOnVirtualThread` contexts (e.g. `NotificationSseResource`).
+
 ### Access Control
 
 `AccessControlProvider` provides blocking access control with resource hierarchy inheritance. Group-based grants resolve via `GroupMembershipProvider`. Parent-child hierarchy with depth guard of 20.
+
+**ResourceId:** Type-safe resource identifier replacing raw `String resourceId`. `ResourceId.of(type, id)` creates a typed reference; `ResourceId.parse("case:123")` parses the `type:id` format. All ACL SPI methods now accept `ResourceId` instead of separate `resourceType` + `resourceId` parameters.
 
 **Action hierarchy:** `AclAction` enum: `READ`, `WRITE`, `ADMIN`, `CLAIM`. ADMIN implies WRITE implies READ -- a WRITE grant satisfies a READ check; an ADMIN grant satisfies both READ and WRITE. CLAIM is independent. `satisfiedBy()` and `deniedBy()` methods encode this hierarchy.
 
@@ -274,18 +344,30 @@ Backend implementations live in casehub-neocortex, not this repo.
 
 ### Agent Infrastructure
 
-`AgentProvider` SPI with two execution paths:
-- `invoke(AgentSessionConfig)` -- single-shot, returns cold `Multi<AgentEvent>`. The `AgentSessionConfig` carries `systemPrompt`, `userPrompt`, `mcpServers` (List<AgentMcpServer>), `timeout`, and `correlationId`.
-- `openSession(AgentSessionInit)` -- multi-turn `AgentSession` (IDLE/ACTIVE/CLOSED state machine). Semaphore held for session lifetime. Sessions are serial -- one turn at a time. Must close via try-with-resources.
+**Two-SPI design:** `AgentProvider` is the caller-facing SPI. `AgentBackend` is the implementor-facing SPI. `RoutingAgentProvider` bridges them — it implements `AgentProvider`, discovers `AgentBackend` beans via CDI `Instance`, and dispatches by the `model` field on config records. Callers always inject `AgentProvider`, never `AgentBackend`.
 
-`AgentEvent` is a sealed interface with variants: `TextDelta`, `ThinkingDelta`, `ToolCallDelta`, `ToolCallComplete`, `ToolResult`, `InvocationComplete` (terminal with cost/usage/timing metadata including `inputTokens`, `outputTokens`, `thinkingTokens`, `cacheReadTokens`, `cacheWriteTokens`, `totalCostUsd`, `durationMs`, `apiDurationMs`, `sessionId`, `numTurns`, `isError`).
+`AgentProvider` has two execution paths:
+- `invoke(AgentSessionConfig)` -- single-shot, returns cold `Multi<AgentEvent>`. The `AgentSessionConfig` carries `systemPrompt`, `userPrompt`, `mcpServers`, `timeout`, `correlationId`, and nullable `model` (provider key).
+- `openSession(AgentSessionInit)` -- multi-turn `AgentSession` (IDLE/ACTIVE/CLOSED state machine). `AgentSessionInit` carries `systemPrompt`, `mcpServers`, `timeout`, `correlationId`, and nullable `model`.
+
+`AgentBackend` has the same two methods plus `key()` — a string identifying the provider ("claude", "openai", "codex", "gemini", "gemini-cli", "langchain4j"). When `model` is null, the configurable default backend is used. When `model` matches no native key, the "langchain4j" backend acts as a catch-all fallback.
+
+`AgentRuntime` abstracts subprocess lifecycle for CLI-based providers. `SubprocessRuntime` wraps `ProcessBuilder`; future runtimes (Kubernetes, container) would slot in without touching provider code. Only CLI providers (`agent-codex`, `agent-gemini-cli`) inject `AgentRuntime`.
+
+`AgentEvent` is a sealed interface with variants: `TextDelta`, `ThinkingDelta`, `ToolCallDelta`, `ToolCallComplete`, `ToolResult`, `InvocationComplete` (terminal with cost/usage/timing metadata).
 
 `AgentMcpServer` is a sealed interface with three transport variants:
 - `Stdio(command, args, env)` -- subprocess MCP server
 - `Sse(url, headers)` -- legacy HTTP Server-Sent Events transport
 - `Http(url, headers)` -- current streamable HTTP MCP transport (preferred for new servers)
 
-`agent-claude/` wraps the Claude Code CLI via the Spring AI Community `claude-code-sdk`. `agent-langchain4j/` provides bidirectional interop: any `ChatModel` as `AgentProvider`, any `AgentProvider` as `ChatModel`. These are not interchangeable -- `agent-claude/` runs an autonomous agent; LangChain4j runs a chat completion with caller-managed tool loop.
+**Session leak detection:** `GatedAgentSession` maintains a registry of open sessions. An `@Scheduled` reaper detects sessions exceeding their timeout without being closed, logs a warning, and performs idempotent cleanup. Sessions implement `AutoCloseable` with idempotent close semantics.
+
+**MCP infrastructure:**
+- `casehub_activate` — on-demand per-operation tool registration. Agents discover and activate tools at runtime instead of exposing all tools at startup.
+- **Resource subscriptions:** `McpResourceRegistry` SPI for registering subscribable MCP resources. `McpResourceSubscriptionManager` tracks subscriptions and fires notifications on resource changes.
+- **Dynamic tool schema:** The operation catalog is injected into the `casehub_action` tool definition at runtime, providing contextual tool descriptions.
+- `@McpDomain` interfaces discovered directly with `@PlatformQuery`/`@PlatformMutation` annotations.
 
 ---
 
@@ -312,9 +394,26 @@ Backend implementations live in casehub-neocortex, not this repo.
 
 | Property | Purpose | Default |
 |----------|---------|---------|
+| `casehub.platform.agent.default-backend` | Default provider key when `model` is null | claude |
 | `casehub.platform.agent.claude.binaryPath` | Path to Claude CLI binary | (resolved from PATH) |
 | `casehub.platform.agent.claude.defaultTimeout` | Default wall-clock timeout | PT5M |
 | `casehub.platform.agent.claude.maxConcurrentSessions` | Concurrent Claude session limit | 4 |
+| `casehub.platform.agent.openai.api-key` | OpenAI API key | (from OPENAI_API_KEY env) |
+| `casehub.platform.agent.openai.default-model` | Default OpenAI model | gpt-4.1 |
+| `casehub.platform.agent.openai.prompt-cache-retention` | Cache retention policy | in_memory |
+| `casehub.platform.agent.openai.default-timeout` | Default wall-clock timeout | PT5M |
+| `casehub.platform.agent.openai.max-concurrent-sessions` | Concurrent OpenAI session limit | 4 |
+| `casehub.platform.agent.codex.binary-path` | Path to Codex CLI binary | codex |
+| `casehub.platform.agent.codex.default-timeout` | Default wall-clock timeout | PT5M |
+| `casehub.platform.agent.codex.max-concurrent-sessions` | Concurrent Codex session limit | 4 |
+| `casehub.platform.agent.gemini.api-key` | Gemini API key | (from env) |
+| `casehub.platform.agent.gemini.default-model` | Default Gemini model | gemini-2.5-flash |
+| `casehub.platform.agent.gemini.cache-ttl` | Explicit cache TTL | PT1H |
+| `casehub.platform.agent.gemini.default-timeout` | Default wall-clock timeout | PT5M |
+| `casehub.platform.agent.gemini.max-concurrent-sessions` | Concurrent Gemini session limit | 4 |
+| `casehub.platform.agent.gemini-cli.binary-path` | Path to Gemini CLI binary | gemini |
+| `casehub.platform.agent.gemini-cli.default-timeout` | Default wall-clock timeout | PT5M |
+| `casehub.platform.agent.gemini-cli.max-concurrent-sessions` | Concurrent Gemini CLI session limit | 4 |
 | `casehub.platform.agent.langchain4j.closeTimeout` | Session close timeout | PT30S |
 | `casehub.platform.agent.langchain4j.sessionMemoryWindowSize` | Conversation memory window | 20 |
 | `casehub.platform.agent.langchain4j.max-concurrent-sessions` | Concurrent LangChain4j session limit | 10 |

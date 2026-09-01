@@ -26,28 +26,68 @@ Not a framework -- this is a domain application. Trading-specific logic lives he
 
 ## Current State
 
-Chapters 1--3 implemented (June 2026). Working vertical slice: domain model, order lifecycle, position tracking, ledger integration, and trust scoring.
+Chapters 1--2 implemented (August 2026). Working vertical slices: domain model, order lifecycle, position tracking, ledger integration, trust scoring, multi-agent arena, and 5-level market data pipeline with WebSocket push.
 
-**Implemented:**
-- Domain model -- `TradeDecision`, `Instrument`, 7 strategy types, 7 market event types, order lifecycle enums
-- `StrategyEvaluator` SPI for pluggable strategy implementations
-- Order lifecycle -- create from decision, fill with price, status tracking
-- Position management -- quantity tracking, average cost, realized P&L calculation
-- Tamper-evident audit trail -- `StrategyEvaluationLedgerEntry` and `OrderExecutionLedgerEntry` with Merkle chain integrity via `JpaLedgerEntry`
-- Trust scoring -- `PnlAttestationService` generates SOUND/FLAGGED attestations from P&L outcomes with confidence scaling
-- Case engine integration -- `StrategyEvaluationCaseDefinition` with capabilities (strategy-evaluation, risk-assessment, order-execution), goals, milestones, and human approval gate for high-risk trades
-- Synthetic market data provider for development/testing
-- 6 REST endpoints (see API section below)
+**Implemented (C1 Strategy Arena):**
+- Strategy Arena -- multi-agent evaluation pipeline: Sequence[Routing → Evaluation → Voting → Risk → Gate → Execute]
+- 7 strategy agents registered via eidos `AgentDescriptorRegistrar`
+- Multi-select routing, per-instrument majority voting, risk classification with human approval gate
+- Order lifecycle, position management, tamper-evident ledger audit trail
+- Trust scoring -- Bayesian Beta from P&L attestations with quality floor filtering
+
+**Implemented (C2 Market Pulse):**
+- 5-level temporal summarisation pipeline: PriceTick → OHLCV → TrendSummary → RegimeAssessment → SessionNarrative
+- Synthetic market data with U-shaped volume profiles and 5 injectable scenarios (flash crash, liquidity drop, gap open, volume spike, mean reversion)
+- Computational summarisers (L0-L2) and LLM-powered summarisers (L3-L4) with structured output and graceful degradation
+- Observation cache with strategy-level visibility policy for arena agent context
+- Market event detection (trend reversal, regime change) via CDI domain events
+- Channel bridge to qhorus for L2+ events
+- Arena integration -- observation context injected into strategy agent evaluations
+- WebSocket push via pages-push EventBroadcaster -- live ticks, bars, trends, regime to browser
+- Minimal fsi-market-panel web component (Quinoa + esbuild) proving end-to-end push path
+- Sequence + Loop orchestration model via casehub-blocks patterns
+- 31 REST endpoints (see API section below)
 - Dual-datasource configuration (H2 dev, PostgreSQL prod)
 
+**Implemented (C4a Overnight Ops Backend):**
+- Incident lifecycle -- severity classification (CRITICAL/HIGH/MEDIUM), off-hours amplification, 2-tier SLA escalation
+- YAML case definitions (overnight-incident, fsi-oversight) with CBR config, milestones, goals, capability bindings
+- 13 response agents -- 7 rule-based (halt, close, alert, adjust, monitor, verify, halt-and-wait), 6 LLM stubs (reduce, hedge, re-evaluate, close-exposure, sentiment, liquidate)
+- Action risk classifier gates high-risk actions (>25% portfolio close, full liquidation, counterparty close) via dedicated oversight CaseHub
+- SLA breach policy with claim/completion tiers, escalation to oncall-escalation group
+- JPA incident store with timeline tracking (Flyway V105-V106)
+- C2 pipeline bridge -- FsiMarketEventDetector fires CDI events for TrendReversalDetected/RegimeChanged
+- EventTypeRegistry registration (4 incident event types) + EventBroadcaster push
+- 7 incident REST endpoints + WorkItem query/resolve
+
+**Implemented (C3 Trade Deliberation):**
+- Multi-agent strategy debate over qhorus channels with epistemic convergence detection
+- Commitment lifecycle, context tracking, sub-task dispatch
+- See C3 section below for full details
+
+**Implemented (C5a Trading Desk Infrastructure):**
+- Dock-workbench page with 10 C1-C3 panels via pages DSL (dataTable, metricGrid, heatmapChart, eventTimeline, hostPanel)
+- Composite data binding (REST initial + WebSocket live) via topicSource
+- Layout persistence via SQLite-backed REST store
+- Quinoa build chain (esbuild, TypeScript)
+
+**Implemented (C4b Overnight Ops Panels):**
+- Typed push payloads: IncidentPushPayload (3 records), WorkItemPushPayload (5 records)
+- FsiWorkItemPushListener observing WorkItemLifecycleEvent (scope-filtered to fsitrading)
+- SLA deadline fields (claimDeadline, completionDeadline) on IncidentRecord + V107 migration
+- 8 blocks-ui panels wired to trading desk dock-workbench (defaultOpen: false, temporary placement for C5b Ops Centre)
+
+**Implemented (C5b Ops Centre Composition + Topic Unification):**
+- Multi-page site with tabs() navigation -- Trading Desk + Ops Centre pages
+- Ops Centre: 11 panels (1 DSL incident dashboard + 10 blocks-ui hostPanel)
+- Trading Desk: ops panels moved to Ops Centre, audit + preferences panels added to bottom zone
+- Push topic separators unified to colon-only (TopicRegistry trie requirement)
+- Topic entity names unified to singular (`incident:*`, `work-item:*`)
+- Incident summary endpoints for dashboard metrics
+- 33 REST endpoints (see API section below)
+
 **Not yet implemented:**
-- CBR for market event knowledge retention
-- Real market data integration (stream modules)
-- Multi-agent strategy debate
-- SLA enforcement with escalation
-- Pages UI integration
-- Agent registration in eidos (open issue #12)
-- Quality dimension scores in P&L attestations (open issue #13)
+- C6: Full CBR pipeline, advanced quality dimensions (max drawdown, market timing, Kelly criterion)
 
 ---
 
@@ -69,6 +109,66 @@ All endpoints produce `application/json`.
 | `GET` | `/api/audit/orders/{orderId}` | Audit trail for an order -- returns typed ledger entries (STRATEGY_EVALUATION, ORDER_EXECUTION) with causality chain |
 | `GET` | `/api/trust/strategies` | Trust scores for all strategy types -- Bayesian Beta from P&L attestations |
 | `GET` | `/api/trust/strategies/{strategyType}` | Trust score for a specific strategy type |
+| `POST` | `/api/evaluations/trigger` | Trigger an arena run (idempotent with `Idempotency-Key` header) |
+| `GET` | `/api/routing/decisions` | Recent routing decisions (paginated, `?limit=N`) |
+| `GET` | `/api/routing/decisions/latest` | Most recent completed routing decision |
+| `GET` | `/api/kpis` | Aggregated KPIs (totalPnl, winRate, tradeCount, avgReturn) |
+| `GET` | `/api/kpis/heatmap` | P&L cross-tabulated by instrument × strategy name |
+| `GET` | `/api/layout/{key}` | Load saved dock-workbench layout |
+| `PUT` | `/api/layout/{key}` | Save dock-workbench layout (JSON body) |
+| `GET` | `/api/preferences/trust-routing` | Trust routing threshold configuration |
+| `PUT` | `/api/preferences/trust-routing` | Update trust routing thresholds |
+| `GET` | `/api/market-data/bars/{instrument}` | Historical 1-min OHLCV bars |
+| `GET` | `/api/market-data/trends/{instrument}` | Recent 5-min trend summaries |
+| `GET` | `/api/market-data/regime/{instrument}` | Latest regime assessment |
+| `GET` | `/api/market-data/narrative` | Latest session narrative |
+| `POST` | `/api/market-data/scenario` | Inject scenario event (flash crash, gap open, etc.) |
+| `POST` | `/api/market-data/scheduler/pause` | Pause tick generation |
+| `POST` | `/api/market-data/scheduler/resume` | Resume tick generation |
+| `GET` | `/api/incidents?limit=20` | Recent incidents with status (paginated) |
+| `GET` | `/api/incidents/{caseId}` | Incident detail (404 if not found) |
+| `GET` | `/api/incidents/{caseId}/timeline` | Timeline events for an incident |
+| `POST` | `/api/incidents/simulate` | Inject simulated incident for demo/testing |
+| `POST` | `/api/incidents/external` | Ingest external operational event (requires `fsi-ops` role) |
+| `GET` | `/api/incidents/summary/severity` | Severity counts as flat rows `[{severity, count}]` |
+| `GET` | `/api/incidents/summary/status` | Active total + SLA status `[{totalActive, slaStatus}]` |
+| `GET` | `/api/work-items?type=&candidateGroup=&status=` | Work items filtered by type/group/status |
+| `POST` | `/api/work-items/{id}/resolve` | Approve/Reject/Delegate a gated action |
+
+### WebSocket Push
+
+Connect to `ws://{host}/ws/push`. Send `listen` to subscribe to topic patterns:
+
+```json
+{"op": "listen", "id": "1", "topics": ["market:ticks:*", "market:regime:*"]}
+```
+
+| Topic pattern | Level | Payload | Rate |
+|---|---|---|---|
+| `market:ticks:{instrument}` | 0 | PriceTick | Every tick (~500ms) |
+| `market:bars:{instrument}` | 1 | OHLCV | ~1/min per instrument |
+| `market:trends:{instrument}` | 2 | TrendSummary | ~1/5min per instrument |
+| `market:regime:{instrument}` | 3 | RegimeAssessment | ~1/hour per instrument |
+| `market:narrative` | 4 | SessionNarrative | ~1/session |
+| `deliberation:active` | — | DeliberationPushPayload (Started/Completed/Failed) | Per deliberation lifecycle |
+| `deliberation:{channelId}` | — | DeliberationPushPayload (all types + ConvergenceUpdate) | Per message during debate |
+| `position:{instrument}` | — | TradingPushPayload.PositionUpdate | Per fill |
+| `pnl:{strategyId}` | — | TradingPushPayload.PnlUpdate | Per position close |
+| `trust:{strategyType}` | — | TradingPushPayload.TrustUpdate | Per arena attestation |
+| `routing:latest` | — | TradingPushPayload.RoutingUpdate | Per routing decision |
+| `incident:{caseId}` | — | IncidentPushPayload (INCIDENT_CREATED / SLA_BREACHED / INCIDENT_RESOLVED) | Per incident lifecycle event |
+| `incident:summary` | — | IncidentPushPayload (INCIDENT_CREATED / INCIDENT_RESOLVED) | Per incident create/resolve |
+| `work-item:{itemId}` | — | WorkItemPushPayload (WORK_ITEM_CREATED / ASSIGNED / ESCALATED / COMPLETED) | Per work item lifecycle |
+| `work-item:{caseId}` | — | WorkItemPushPayload.GateOpened | Per high-risk action gate |
+| `work-item:summary` | — | WorkItemPushPayload (all types + GateOpened) | Aggregate work item events |
+
+Deliberation payloads include a `type` field for client dispatch: `DELIBERATION_STARTED`, `DELIBERATION_COMPLETED`, `DELIBERATION_FAILED`, `CONVERGENCE_UPDATE`.
+
+Trading payloads include a `type` field: `POSITION_UPDATE`, `PNL_UPDATE`, `TRUST_UPDATE`, `ROUTING_UPDATE`.
+
+Incident payloads include a `type` field: `INCIDENT_CREATED`, `SLA_BREACHED`, `INCIDENT_RESOLVED`. `INCIDENT_CREATED` carries `claimDeadline` and `completionDeadline` timestamps for SLA countdown display.
+
+Work item payloads include a `type` field: `WORK_ITEM_CREATED`, `WORK_ITEM_ASSIGNED`, `WORK_ITEM_ESCALATED`, `WORK_ITEM_COMPLETED`, `GATE_OPENED`. `ESCALATED` carries updated deadline timestamps after SLA tier change.
 
 ### Trust Score Response
 
@@ -90,7 +190,7 @@ Phase is `BOOTSTRAP` until 10 decisions, then `ACTIVE`.
 ## Domain Model (API Module)
 
 **Records:**
-- `TradeDecision` -- strategy output: strategyId, instrument, side, quantity, orderType, limitPrice, rationale
+- `TradeDecision` -- strategy output: strategyId, instrument, side, quantity, orderType, limitPrice, rationale, provenance (nullable TradeProvenance)
 - `Instrument` -- symbol + asset class + exchange
 
 **Enums:**
@@ -99,14 +199,68 @@ Phase is `BOOTSTRAP` until 10 decisions, then `ACTIVE`.
 - `OrderSide` -- BUY, SELL
 - `OrderType` -- MARKET, LIMIT, STOP, STOP_LIMIT
 - `OrderStatus` -- PENDING, SUBMITTED, PARTIALLY_FILLED, FILLED, CANCELLED, REJECTED
-- `MarketEventType` -- PRICE_TICK, VOLUME_SPIKE, FLASH_CRASH, LIQUIDITY_DROP, GAP_OPEN, CIRCUIT_BREAKER, NEWS_EVENT
+- `MarketEventType` -- PRICE_TICK, VOLUME_SPIKE, FLASH_CRASH, LIQUIDITY_DROP, GAP_OPEN, CIRCUIT_BREAKER, NEWS_EVENT, COUNTERPARTY_FAILURE, MARGIN_CALL. Enum for JPA/JSON persistence.
+- `MarketEvent` -- sealed interface hierarchy grouping event types by source domain: `RawMarketData` (PRICE_TICK, VOLUME_SPIKE), `DetectedEvent` (FLASH_CRASH through NEWS_EVENT), `OperationalEvent` (COUNTERPARTY_FAILURE, MARGIN_CALL). Use `MarketEventType.domain()` for compile-time grouping, `toEvent()` to construct typed instances.
+- `IncidentSeverity` -- CRITICAL, HIGH, MEDIUM
 
-**SPI:**
-- `StrategyEvaluator` -- `evaluate(strategyId, instrument, currentPrice, marketContext) -> Optional<TradeDecision>`
+**Market data types (C2):**
+- `PriceTick` -- instrument, price, volume, timestamp, anomaly flag
+- `OHLCV` -- 1-minute bar: open, high, low, close, volume, windowStart, windowEnd
+- `TrendSummary` -- 5-min trend: direction (UP/DOWN/FLAT), momentum, volatility, priorRegime
+- `RegimeAssessment` -- LLM-synthesised: instrument, regime (TRENDING/VOLATILE/RANGE_BOUND/MEAN_REVERTING), confidence, rationale
+- `SessionNarrative` -- LLM-synthesised: instruments covered, narrative text, timestamp
+
+**Arena types:**
+- `MarketSignal` -- instrument, eventType, price, volume, timestamp
+- `StrategyResponse` -- sealed: `Trade(List<TradeDecision>, String)` | `Hold(String)`
+- `ConsensusResult` -- per-instrument voting results with deadlock detection
+- `InstrumentConsensus` -- status (CONSENSUS/DEADLOCKED/NO_VOTERS), winningSide, quantity, votes
+- `RiskAssessment` -- overall and per-instrument risk levels (LOW/MEDIUM/HIGH/CRITICAL)
+- `ApprovalOutcome` -- NOT_REQUIRED, APPROVED, REJECTED, TIMEOUT
+
+**Deliberation types (C3):**
+- `TradeProvenance` -- deliberation provenance: deliberationChannelId, commitmentId, convergenceState, confidence
+- `DeliberationRecord` -- JPA entity: channel_id, instrument, status, trigger_type, convergence_state, confidence, established/disputed/pending counts, rounds, participants, commitment_id, trade_decision_id, timestamps, conversation/common-ground snapshots
+- `DeliberationDecisionLedgerEntry` -- JOINED ledger entry: deliberationId, channelId, instrument, convergenceState, confidence, established/disputed counts, participants
 
 **Identity:**
 - `FsiActorIdentity` -- derives actor IDs, roles, and capability tags from `StrategyType` for trust scoring integration
+- `FsiActorIdentity.HUMAN_TRADER` -- constant `"human:trader@v1"` for escalation commitments
 - `FsiCapabilities` -- string constants for capability-based routing (momentum, mean-reversion, etc.)
+
+---
+
+## C3 — Trade Deliberation
+
+Multi-agent strategy debate over qhorus channels with epistemic convergence detection, producing commitments and trade decisions.
+
+### REST Endpoints
+
+| Method | Path | Purpose | Response |
+|--------|------|---------|----------|
+| `GET` | `/api/deliberations` | List deliberations | Paginated list, filterable by instrument, convergenceState, triggerType |
+| `GET` | `/api/deliberations/{id}` | Single record | `DeliberationRecord`, 404 for unknown |
+| `POST` | `/api/deliberations/trigger?instrument=AAPL` | Manual trigger | 202 Accepted with record ID, 409 if in-flight |
+
+### Convergence Paths
+
+| State | Action |
+|-------|--------|
+| CONSENSUS | Execute trade via C1 pipeline with full confidence |
+| DEADLOCK | Escalate to human trader |
+| PROGRESSING | Escalate (debate active at round cap) |
+| DIMINISHING_RETURNS | Execute if established ratio >= 0.5, escalate otherwise |
+| CONVERGING | Execute if established ratio >= 0.7, escalate otherwise |
+
+### Configuration Properties
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `fsi.deliberation.max-rounds` | 10 | Maximum debate rounds |
+| `fsi.deliberation.wall-clock-timeout-seconds` | 900 | Wall-clock timeout for debate |
+| `fsi.deliberation.trend-reversal-threshold` | 0.5 | Minimum momentum for trend reversal trigger |
+| `fsi.deliberation.diminishing-returns-min-established` | 0.5 | Minimum established ratio for DR execution |
+| `fsi.deliberation.converging-consensus-threshold` | 0.7 | Minimum established ratio for converging execution |
 
 ---
 

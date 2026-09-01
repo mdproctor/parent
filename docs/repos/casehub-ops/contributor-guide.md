@@ -41,12 +41,13 @@ Each module also provides an `ApprovalEvaluator` for the approval workflow.
 
 `io.casehub.ops.deployment.DeploymentGoalCompiler` -- `@ApplicationScoped`, implements `GoalCompiler<DeploymentGoals>`.
 
-Compiles five entry lists from `DeploymentGoals` into a flat `DesiredStateGraph`:
+Compiles six entry lists from `DeploymentGoals` into a flat `DesiredStateGraph`:
 - `agents()` -> `AgentNodeSpec` nodes
 - `channels()` -> `ChannelNodeSpec` nodes
 - `caseTypes()` -> `CaseTypeNodeSpec` nodes (with `DefinitionPayloadLoader` resolution for file-backed definitions)
 - `trust()` -> `TrustPolicyNodeSpec` nodes
 - `endpoints()` -> `EndpointNodeSpec` nodes
+- `detections()` -> `DetectionNodeSpec` nodes (RAS situation definitions via `SituationRegistrar`)
 
 Each `GoalEntry<S>` carries a `dependsOn` list of node IDs for dependency edges.
 
@@ -54,14 +55,14 @@ Each `GoalEntry<S>` carries a `dependsOn` list of node IDs for dependency edges.
 
 Delegates to `ThresholdFaultPolicy` from casehub-desiredstate:
 - **Monitored fault types**: `PROVISION_FAILED`
-- **Monitored node types**: `agent`, `channel`, `case_type`, `trust_policy`, `endpoint`
+- **Monitored node types**: `agent`, `channel`, `case_type`, `trust_policy`, `endpoint`, `detection`
 - **Ignored types**: `deployment-review` (prevents cascading escalation)
 - **Threshold**: 3 consecutive failures
 - **Action**: adds `deployment-review` node with `DeploymentReviewSpec` (human escalation)
 
 ### Drift Detection Architecture
 
-Five `NodeDriftChecker` implementations, one per node type. The `DeploymentActualStateAdapter` routes to the correct checker by `nodeType()`.
+Six `NodeDriftChecker` implementations, one per node type. The `DeploymentActualStateAdapter` routes to the correct checker by `nodeType()`.
 
 **AgentDriftChecker** -- delegates to `AgentDescriptorComparator.compare(desired, actual)`. Resolves actual via `AgentRegistry.findById()`. Field-by-field comparison with DEBUG logging of each `drift.field()`, `drift.desiredValue()`, `drift.actualValue()`. Returns `ABSENT`/`DRIFTED`/`PRESENT`.
 
@@ -374,7 +375,7 @@ All filtered by `managed-by=casehub-ops` label.
 
 `io.casehub.ops.app.case_` package (trailing underscore avoids Java keyword conflict).
 
-**CaseDefinitionRegistrar** -- `@ApplicationScoped`. Registers `ApplicationCaseDescriptor` (parent), `DriftRemediationCaseDescriptor`, and `ScalingEventCaseDescriptor` as child cases. `StubChildCaseDescriptor` used for unimplemented cases (compliance-remediation, incident-response).
+**CaseDefinitionRegistrar** -- `@ApplicationScoped`. Registers `ApplicationCaseDescriptor` (parent), `DriftRemediationCaseDescriptor`, `ScalingEventCaseDescriptor`, `IncidentResponseCaseDescriptor`, and `ComplianceRemediationCaseDescriptor` as child cases. `StubChildCaseDescriptor` used for unimplemented cases (cve-response, service-upgrade).
 
 **DriftRemediationCaseDescriptor** -- static `build(NodeConvergenceTracker)` factory:
 - **classify-drift worker**: evaluates `consecutiveDriftCount`, `driftDetails` (node count, security-sensitive fields: image, serviceAccount, rbac, secrets). Outputs severity: `benign` or `critical`
@@ -390,6 +391,14 @@ All filtered by `managed-by=casehub-ops` label.
 - **Completion**: `.scalingStatus == "converged" || .scalingStatus == "no-change-needed"`
 
 **ScalingPolicy** record: `clamp(targetReplicas)` applies `Math.max(min, Math.min(max, target))`. `isCoolingDown(lastScalingEvent, now)` enforces cooldown. Constructor validates `minReplicas >= 0`, `maxReplicas >= minReplicas`, non-negative cooldown. `UNBOUNDED` constant for unconstrained scaling.
+
+**ComplianceRemediationCaseDescriptor** -- static `build(ApplicationLifecycleService, NodeConvergenceTracker)` factory:
+- **compliance-assess-worker**: classifies violation by outcome × controlType × serviceId. FAIL + auto-fixable type (LOG_RETENTION, ENCRYPTION_AT_REST) + serviceId present → `update-config`. All other combinations → escalate. UNAVAILABLE/STALE outcomes always escalate.
+- **compliance-remediate-worker**: calls `ApplicationLifecycleService.updateServiceConfig()` to merge config into service env. On exception → routes to escalation.
+- **compliance-verify-worker**: registers affected nodes with `NodeConvergenceTracker`
+- **compliance-escalate-worker**: writes `.complianceStatus = "escalated"` with violation summary
+- **Completion**: `.complianceStatus == "resolved" || .complianceStatus == "escalated"`
+- No dependency on the `compliance/` module — works with violation data as received from case bindings
 
 ### Scaling Trigger Mechanism
 

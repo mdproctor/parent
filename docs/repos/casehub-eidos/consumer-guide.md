@@ -17,10 +17,12 @@ Any Quarkus app that depends on `casehub-eidos` can register agents with structu
 
 | artifactId | When to use | What you get |
 |---|---|---|
-| `casehub-eidos-api` | Always -- compile dependency | Domain types: `AgentDescriptor`, `AgentCapability`, `AgentDisposition`, `AgentGoal`, `AgentConstraint`, `AgentMatch`, `AgentQuery`, `AgentRegistry`, `CapabilityHealth`, `SystemPromptRenderer`, `VocabularyRegistry`, `TemplateRegistry`, `DispositionHealth`, `DispositionEvolution`, `AgentStateStore`, `BehavioralSignalStore`, `DispositionSignalStore`. SPIs in `api.spi`: `AgentDescriptorRegistrar`, `VocabularyRegistrar`, `TemplateRegistrar`. Utilities: `CapabilityResolver`, `BehavioralExpectations`, `AgentDescriptorComparator`. Sealed types: `MatchDegree`, `CapabilityStatus`, `DispositionStatus`, `EvolutionResult`. Pure Java, no CDI. |
+| `casehub-eidos-api` | Always -- compile dependency | Domain types: `AgentDescriptor`, `AgentCapability`, `AgentDisposition`, `AgentGoal`, `AgentConstraint`, `AgentMatch`, `AgentQuery`, `AgentRegistry`, `AgentSelector`, `SelectionContext`, `CapabilityHealth`, `SystemPromptRenderer`, `VocabularyRegistry`, `TemplateRegistry`, `DispositionHealth`, `DispositionEvolution`, `AgentStateStore`, `BehavioralSignalStore`, `DispositionSignalStore`. SPIs in `api.spi`: `AgentDescriptorRegistrar`, `VocabularyRegistrar`, `TemplateRegistrar`. Utilities: `CapabilityResolver`, `BehavioralExpectations`, `AgentDescriptorComparator`. Sealed types: `MatchDegree`, `CapabilityStatus`, `AgentSelection`, `DispositionStatus`, `EvolutionResult`. Enums: `EscalationKind`. Pure Java, no CDI. |
 | `casehub-eidos` | Always -- runtime dependency | Quarkus extension: CDI registry, health implementations, renderer, JPA persistence, Flyway migrations. `@DefaultBean` for all SPIs. |
 | `casehub-eidos-memory` | Tests and prototyping | `@Alternative @Priority(1)` in-memory implementations: `InMemoryAgentRegistry`, `InMemoryTemplateRegistry`, `InMemoryAgentStateStore`, `InMemoryBehavioralSignalStore` (per-signal TTL via `@ConfigProperty`), `InMemoryDispositionSignalStore` (ConcurrentHashMap + AtomicInteger, no TTL), `InMemoryRenderedPromptCache`. Activate by adding as dependency. |
 | `casehub-eidos-vocab` | Optional -- domain vocabularies | Well-known vocabularies: `SvoTerm`, `ConscientiousnessTerm`, `CasehubSlotTerm`, `BelbinTerm` (9 team roles), `DiscTerm` (4 DISC types, `axisExactMatch`), `ThomasKilmannTerm` (5 conflict modes), `CasehubCapabilityTerm` (hierarchical capability taxonomy), `JungianFunctionTerm` (8 cognitive functions with `axisExactMatch`, `shadow()`, `opposite()`, `compatibleAuxiliaries()`), `MbtiTypeTerm` (16 MBTI types with `specializes()` to `JungianFunctionTerm`, `defaultProfile()`), `JungianEvolutionType` (4 JPAF reflection types). All optional -- consumers define their own vocabularies. |
+| `casehub-eidos-annotations` | Optional -- annotation-driven identity | Quarkus extension: `@Identity`, `@Disposition`, `@AgentGoals`, `@AgentConstraints` generate `AgentDescriptorRegistrar` beans at build time. Also processes `@Discoverable` (from eidos-api) for capability auto-registration. Depends on `casehub-eidos`. |
+| `casehub-eidos-routing` | Optional -- engine-aware selection | `EngineAwareAgentSelector` `@Alternative @Priority(1)`. Bridges `AgentMatch` → `AgentCandidate` → `AgentRoutingStrategy`. Requires `casehub-engine-api` on classpath. Displaces `SimpleAgentSelector` via CDI priority. Add when deploying with casehub-engine for trust-maturity-model-compliant selection. |
 | `casehub-eidos-graph` | Optional -- knowledge graph | Graph SPIs: `AgentGraphStore` (write task/outcome/attestation events), `AgentGraphQuery` (read agent history, rank agents by outcome), `AgentGraphBackfill` (ledger ingestion), `TaskSemanticEnricher` (application-tier enrichment). JPA persistence with Flyway V3. Activates by classpath presence. |
 
 **Maven coordinates:** `groupId: io.casehub`, root package: `io.casehub.eidos`, API package: `io.casehub.eidos.api`, SPI package: `io.casehub.eidos.api.spi`.
@@ -78,7 +80,7 @@ Single-valued convenience: `Builder.socialOrient("collaborative")` creates a sin
 
 ### AgentGoal
 
-First-class goal record: `name`, `description`, `priority` (PRIMARY/SECONDARY), `visibility` (PUBLIC/PRIVATE). BDI-inspired naming: goals are what the agent *wants* (standing, identity-level). `GoalContext` on `AgentPromptContext` is what the agent is doing right now (ephemeral, per-invocation).
+First-class goal record: `name`, `description`, `priority` (PRIMARY/SECONDARY), `visibility` (PUBLIC/PRIVATE), `capabilities` (List<String>, maps to declared `AgentCapability.name()` on the same descriptor). Empty list = cross-cutting goal affected by any capability failure; non-empty = affected only when a listed capability fails. Cross-validated at construction: every name must match a declared capability. BDI-inspired naming: goals are what the agent *wants* (standing, identity-level). `GoalContext` on `AgentPromptContext` is what the agent is doing right now (ephemeral, per-invocation).
 
 ### AgentConstraint
 
@@ -187,7 +189,9 @@ Reusable prose fragments for agent system prompts:
 
 `@FunctionalInterface` SPI in `api.spi`: `List<AgentDescriptor> descriptors()`. CDI beans implementing this interface are discovered at startup and their descriptors bulk-registered. Bootstrap validates no duplicate `(agentId, tenancyId)` pairs.
 
-**ClasspathYamlDescriptorRegistrar** -- `@ApplicationScoped` implementation scanning `META-INF/eidos/descriptors.yaml` from the classpath. Multiple YAML files across JARs are merged. Supports full `AgentDescriptor` fields including `briefing`, `axisVocabularies`, `disposition` (with `mbtiType` and `dispositionProfile`), and `capabilities` (with `excludedDomains`).
+**ClasspathYamlDescriptorRegistrar** -- `@ApplicationScoped` implementation scanning `META-INF/eidos/descriptors.yaml` from the classpath. Multiple YAML files across JARs are merged. Supports full `AgentDescriptor` fields including `briefing`, `axisVocabularies`, `disposition` (with `mbtiType` and `dispositionProfile`), and `capabilities` (with `excludedDomains`). Supports yaml-core preprocessing: `${var.*}` variables (static, from YAML `variables` section), `${config.*}` variables (from Quarkus MicroProfile Config), `forEach` expansion (named iteration groups, inline lists, CSV data sources via `dataSources` section), and `when` conditional inclusion. Expansion limit: 100 per template. All preprocessing keys (`variables`, `iterations`, `dataSources`, `forEach`, `when`) are optional — existing YAML without them works unchanged.
+
+**Annotation-driven registration** (requires `casehub-eidos-annotations`) -- annotate an interface with `@Identity(slot = "analyst")` and optionally `@Disposition`, `@AgentGoals`, `@AgentConstraints`, `@Discoverable`. The build extension generates `AgentDescriptorRegistrar` beans at build time. `agentId` defaults to kebab-cased class name (acronym-aware: `HTMLParser` → `html-parser`). `tenancyId` from MicroProfile config `casehub.eidos.annotations.default-tenancy-id` (default: `"default"`). When vocabulary modules are on the classpath, disposition terms are validated at build time.
 
 ### AgentDescriptorComparator
 
@@ -218,17 +222,10 @@ Activates by classpath presence. JPA-backed with Flyway V3 migration. Runtime pr
 
 JPA/Flyway -- version range V1--V999 in `classpath:db/eidos/migration`. Current migrations:
 
-| Version | Content |
-|---|---|
-| V1 | Initial schema (agent descriptor, capabilities) |
-| V2 | Agent degradation state |
-| V3 | Agent graph (in `casehub-eidos-graph`) |
-| V4 | Capability specialization table |
-| V5 | Behavioral signal table |
-| V6 | Capability description column |
-| V7 | Descriptor templates |
-| V8 | Goals and constraints tables |
-| V9 | Disposition signal table |
+| Version | Module | Content |
+|---|---|---|
+| V1 | runtime | Full schema -- agent descriptor, capabilities, degradation state, capability specialization, behavioral signals, goals, constraints, disposition signals, goal signals |
+| V3 | graph | Agent graph (task, outcome, attestation tables) |
 
 No existing installations -- no deployed instances in production. All schema changes go directly into base migration files.
 

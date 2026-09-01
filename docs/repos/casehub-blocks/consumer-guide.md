@@ -9,7 +9,7 @@
 
 ## What This Module Does
 
-Packages recurring cross-application patterns that require LLM integration, classical AI, or foundational API composition. Single module, single artifact: `casehub-blocks`.
+Packages recurring cross-application patterns that require LLM integration, classical AI, or foundational API composition. Multi-module reactor with four artifacts: `casehub-blocks` (core), `casehub-blocks-speech-api` (speech SPIs, zero foundation deps), `casehub-blocks-speech-sherpa` (sherpa-onnx FFM implementation, JDK 22+), `casehub-blocks-engine-adapter` (engine integration).
 
 Includes a full agentic orchestration framework with DAG-based execution plans, hybrid (static + LLM) task decomposition, composable routing/aggregation/termination strategies, and a pattern DSL for common multi-agent topologies.
 
@@ -51,6 +51,20 @@ Channel summary integration -- bridges `ContentSummariser` into qhorus `SummaryU
 |-------|------|-------------|
 | `ChannelSummariser` | class | CDI-managed `SummaryUpdateHook` implementation. Delegates to injected `ContentSummariser<Message>`. Annotated `@ApplicationScoped`. |
 | `HeuristicMessageSummariser` | class | Default (non-LLM) `ContentSummariser<Message>`. Produces heuristic text summaries with participant lists, time periods, topics. Annotated `@DefaultBean @ApplicationScoped` -- replaceable by any `@ApplicationScoped ContentSummariser<Message>`. |
+| `NoOpThreadSummaryStore` | class | No-op `@DefaultBean @ApplicationScoped` `ThreadSummaryStore`. `save()` returns the input unchanged, queries return empty. Prevents CDI deployment failures when no real store is on the classpath. Override with a qhorus persistence implementation. |
+| `ThreadSummaryObserver` | class | `@ApplicationScoped` push-based observer -- detects DONE/FAILURE messages with correlationId, fetches thread messages via `CrossTenantMessageStore`, delegates to `ContentSummariser<Message>`, writes to `ThreadSummaryStore`. Per-correlationId concurrency guard. Async via `ManagedExecutor`. |
+
+### `io.casehub.blocks.attestation`
+
+Attestation write-path types and lifecycle observer SPI.
+
+| Class | Type | What it does |
+|-------|------|-------------|
+| `AttestationIntent` | record | Full attestation payload: entryId, subjectId, verdict, confidence, capabilityTag, attestorId, actorType, attestorRole, dimensions, evidence, namespace, causedByEntryId (nullable). |
+| `AttestationIntentWriter` | interface | SPI: `void write(AttestationIntent, String tenancyId)`. Implementations MUST honour the provided `entryId`. |
+| `NoOpAttestationIntentWriter` | class | No-op `@DefaultBean @ApplicationScoped` `AttestationIntentWriter`. Prevents CDI deployment failures when no real writer is on the classpath. Override with a ledger-backed implementation. |
+| `LifecycleAttestationObserver<E>` | interface | `@FunctionalInterface` SPI: `List<AttestationIntent> observe(E event, AttestationContext)`. Domain repos implement per event type. |
+| `AttestationContext` | record | Ambient context for observers: tenancyId, caseId, capabilityTag. |
 
 ### `io.casehub.blocks.conversation`
 
@@ -78,7 +92,7 @@ Structured conversation protocol -- reusable infrastructure for multi-agent deli
 | `FlagEntry` | record | Human-escalation flag: `entryId`, `round`, `role`, `content` |
 | `RoundMemo` | record | Agent working notes: `role`, `round`, `content` |
 | `SubTaskFinding` | record | Sub-task lifecycle: `subTaskId`, `taskType`, `requestedBy`, `pointId`, `finding`, `errorReason`, `status` (TaskStatus) |
-| `RenderContext` | record | Optional rendering enrichments: `reactions` (Map), `commonGround` (CommonGroundState), `convergence` (ConvergenceSignal). Has `EMPTY` singleton and `withReactions()` factory. |
+| `RenderContext` | record | Optional rendering enrichments: `reactions` (Map), `commonGround` (CommonGroundState), `convergence` (ConvergenceSignal), `progress` (Map). Has `EMPTY` singleton, `withReactions()`, and `withProgress()` factories. |
 
 **Epistemic common ground:**
 
@@ -97,11 +111,154 @@ Structured conversation protocol -- reusable infrastructure for multi-agent deli
 | Class | Type | What it does |
 |-------|------|-------------|
 | `ConvergenceAnalyser` | final class | `analyse(ConversationState, CommonGroundState, ConvergencePolicy, recentWindow) -> ConvergenceSignal`. Builds `ConvergenceContext` and delegates to policy. |
-| `ConvergenceSignal` | record | Assessment: `state` (ConvergenceState), `confidence`, `reason`. |
+| `ConvergenceSignal` | record | Assessment: `state` (ConvergenceState), `origin`, `reason`. |
 | `ConvergenceState` | enum | `PROGRESSING`, `CONVERGING`, `CONSENSUS`, `DEADLOCK`, `DIMINISHING_RETURNS` |
 | `ConvergenceContext` | record | Metrics: `totalPoints`, `establishedCount`, `pendingCount`, `disputedCount`, `recentSimilarity`, `messageLengthTrend`, `roundsSinceNewPoint`, `roundsSinceStatusChange`, `recentMessageTypeCounts`. |
 | `ConvergencePolicy` | @FunctionalInterface | Strategy for evaluating convergence: `evaluate(state, commonGround, context) -> ConvergenceSignal`. |
 | `ConvergencePolicies` | final class | Built-in policies: `structural(similarityThreshold, staleRounds)`, `commonGroundRatio(consensusThreshold, deadlockDisputeRatio)`, `composite(policies...)`. |
+
+### `io.casehub.blocks.conversation.orchestration`
+
+Autonomous multi-agent conversation orchestrator -- composes `ConversationProjection`, `PartitionedObservationService`, pluggable turn policies, and `TerminationCondition` into a self-driving conversation loop. Applications wire it into their `ChannelBackend` with domain-specific context injection only.
+
+**SPIs:**
+
+| Class | Type | What it does |
+|-------|------|-------------|
+| `TurnPolicy` | interface | Determines which agents respond next. Receives `ConversationState`, `TurnContext`, and the participant list. Returns a list (empty = silence). |
+| `PromptAssembler` | @FunctionalInterface | Assembles per-agent prompts from the agent's observation drain and conversation state. Override to inject domain context (document content, selection scope). |
+| `ResponseMessageBuilder` | @FunctionalInterface | Converts an agent's `AgentResult` into a `MessageView` the projection can fold. Override for domain-specific entry type determination. |
+| `ConversationListener` | @FunctionalInterface | Optional per-dispatch callback: `onDispatch(ConversationState, TerminationDecision, int dispatchCount, Duration elapsed)`. Fires after each termination check in the conversation loop. Wire via the 10-arg constructor. Use for progress broadcasting (e.g., WebSocket push of convergence state). |
+
+**Core types:**
+
+| Class | Type | What it does |
+|-------|------|-------------|
+| `ConversationOrchestrator` | class | Composition root. Constructor takes projection, observation service, turn policy, termination condition, agent invoker, prompt assembler, response builder, response dispatcher, participant list, and optional `ConversationListener`. `converse(MessageView) -> Uni<ConversationOutcome>` runs the full conversation loop. `terminate()` stops from outside. |
+| `ConversationOutcome` | record | Result: `finalState`, `terminationDecision`, `agentResults`, `dispatchCount`, `elapsed`. |
+| `AgentParticipant` | record | Agent identity + role + system prompt. `agentId()` delegates to `agentRef.name()`. |
+| `TurnContext` | record | Turn-relevant fields: `senderId`, `targetId` (nullable), `entryType`, `metadata`. Extracted from `MessageView` by the orchestrator. |
+
+**Standard turn policies:**
+
+| Class | Type | What it does |
+|-------|------|-------------|
+| `RoundRobinTurnPolicy` | class | Strict alternation through participants. Stateless -- derives next from `ConversationState`. |
+| `AddressedTurnPolicy` | class | Respond when message target matches agent role. Null target = silence. |
+| `PointAddressedTurnPolicy` | class | Respond to unresolved OPEN/ACTIVE points not yet responded to by the agent's role. |
+| `FreeTurnPolicy` | class | All participants except the sender respond. Pair with `MaxIterationsTermination` as a safety valve. |
+
+**Conversation-specific termination conditions** (all implement `TerminationCondition<ConversationState>`):
+
+| Class | Type | What it does |
+|-------|------|-------------|
+| `AllAgreedTermination` | class | Complete when all points have a resolved status (configurable set, e.g., AGREED, VERIFIED). |
+| `SupervisorTermination` | class | Complete when a supervisor-role agent signals end with a configurable entry type. |
+| `ContestedEscalation` | class | Escalate when any DISPUTED point exceeds a dispute-round threshold. |
+| `CompositeTermination` | class | Evaluates conditions in order; first non-Continue decision wins. |
+
+**Wiring example (drafthouse debate):**
+
+```java
+var participants = List.of(
+    new AgentParticipant(reviewerRef, "REV", reviewerSystemPrompt),
+    new AgentParticipant(implementorRef, "IMP", implementorSystemPrompt)
+);
+
+var orchestrator = new ConversationOrchestrator(
+    new DebateChannelProjection(),
+    observationService,
+    new RoundRobinTurnPolicy(),
+    new CompositeTermination(List.of(
+        new MaxIterationsTermination<>(20),
+        new AllAgreedTermination(Set.of("AGREED", "VERIFIED")),
+        new ContestedEscalation(3)
+    )),
+    debateAgentInvoker,
+    new DebatePromptAssembler(documentContent, selectionScope),
+    debateResponseBuilder,
+    message -> messageService.post(channelId, message),
+    participants
+);
+
+ConversationOutcome outcome = orchestrator.converse(triggeringMessage)
+    .await().indefinitely();
+```
+
+### `io.casehub.blocks.normative`
+
+Generic normative conflict resolution — resolves conflicts between competing norm decisions. When multiple norms (e.g., risk classifiers, policy rules) produce contradictory decisions, a `ConflictResolutionStrategy<T>` determines which one wins.
+
+| Class | Type | What it does |
+|-------|------|-------------|
+| `ConflictResolutionStrategy<T>` | interface | `@FunctionalInterface`: `NormResolution<T> resolve(List<NormDecision<T>>)`. |
+| `NormDecision<T>` | record | Decision wrapped with norm metadata: source, priority, specificity, establishedAt. |
+| `NormResolution<T>` | record | Resolution outcome: winner, overridden list, reason, method. |
+| `NormSpecificity` | enum | UNIVERSAL → DOMAIN → TENANT → CASE_TYPE → INSTANCE. |
+| `PriorityResolution<T>` | record | Lowest priority value wins. |
+| `SpecificityResolution<T>` | record | Most specific norm wins (lex specialis). |
+| `RecencyResolution<T>` | record | Most recently established norm wins (lex posterior). |
+| `MostRestrictiveResolution` | record | Typed to `RiskDecision` — GateRequired beats Autonomous. |
+| `EscalationResolution<T>` | record | Always escalates when any conflict exists. |
+
+**Usage with oversight:**
+
+```java
+var decisions = List.of(
+    new NormDecision<>(
+        "clinical-classifier", new RiskDecision.GateRequired("AE grade 4", true, null, null, null, null, null),
+        1, NormSpecificity.DOMAIN, Instant.now()),
+    new NormDecision<>(
+        "default-classifier", new RiskDecision.Autonomous(),
+        10, NormSpecificity.UNIVERSAL, Instant.now())
+);
+var resolution = new PriorityResolution<RiskDecision>().resolve(decisions);
+// resolution.winner() = clinical-classifier (priority 1 beats 10)
+```
+
+### `io.casehub.blocks.negotiation`
+
+Negotiation channel protocol -- reusable `ChannelProjection<NegotiationState>` for proposal/counter-proposal exchange. Uses the PROPOSE MessageType (commissive speech act, qhorus#395). Supports bilateral (two-party alternating) and mediator-coordinated multilateral (N-party with configurable quorum).
+
+| Class | Type | What it does |
+|-------|------|-------------|
+| `NegotiationProjection` | class | Concrete `ChannelProjection<NegotiationState>`. Constructor: `(Set<String> parties, AcceptancePolicy)`. Dispatches on PROPOSE/DONE/DECLINE. Party set required upfront. `apply()` never throws. |
+| `NegotiationFold` | final class | Pure static state transitions: `propose()`, `accept()`, `reject()`, `agree()`, `deadlock()`, `withdraw()`. |
+| `NegotiationState` | record | Immutable state: `proposals` (ordered chain), `parties`, `responses` (per-party to active proposal), `outcome`. |
+| `Proposal` | record | Individual proposal: proposalId, proposer, content, round, createdAt, status. |
+| `Response` | record | Per-party response: party, decision, reason, respondedAt. |
+| `AcceptancePolicy` | interface | `@FunctionalInterface`: `boolean isAccepted(NegotiationState)`. |
+| `UnanimousAcceptance` | record | All non-proposer parties must accept. |
+| `MajorityAcceptance` | record | >50% of non-proposer parties. |
+| `ThresholdAcceptance` | record | At least N acceptances. |
+| `NegotiationRenderer` | class | Renders state as Markdown: current proposal, responses, pending parties, history. |
+| `NegotiationOutcome` | enum | PENDING, AGREED, DEADLOCKED, WITHDRAWN. |
+| `ProposalStatus` | enum | ACTIVE, SUPERSEDED, ACCEPTED, REJECTED. |
+
+**Termination conditions** (implement `TerminationCondition<NegotiationState>` from agentic.termination):
+
+| Class | What it does |
+|-------|-------------|
+| `MaxRoundsTermination` | Complete at max rounds. |
+| `AcceptedTermination` | Complete when outcome == AGREED. |
+| `TerminalOutcomeTermination` | Complete for AGREED, Failed for DEADLOCKED/WITHDRAWN. |
+| `DeadlineTermination` | Complete when latest proposal exceeds deadline. |
+| `NegotiationCompositeTermination` | First-non-Continue-wins composition. |
+
+**Consensus Gate pattern** (composition, not a separate type):
+
+A consensus gate (named M-of-N approval) composes directly from negotiation types -- no dedicated `ConsensusProjection` needed:
+
+```java
+// Consensus gate: 2-of-3 approval
+var consensus = new NegotiationProjection(
+    Set.of("chair", "voter-a", "voter-b", "voter-c"),
+    new ThresholdAcceptance(2)
+);
+// Chair posts PROPOSE with the motion, voters respond DONE (approve) or DECLINE (reject).
+// ThresholdAcceptance fires AGREED when 2 voters accept.
+// For unanimous: use UnanimousAcceptance. For majority: MajorityAcceptance.
+```
 
 ### `io.casehub.blocks.agentic`
 
@@ -144,7 +301,7 @@ Compositional agentic orchestration framework -- ten sub-packages implementing f
 | `DecompositionHeuristic<T>` | @FunctionalInterface | Scores decomposition methods: `evaluate(CompoundTask, methods, context) -> Uni<List<ScoredMethod>>` |
 | `ScoredMethod<T>` | record | Heuristic output: `method` (DecompositionMethod), `score` (double) |
 | `IdentityDecomposition<T>` | class | Pass-through -- wraps single task as-is |
-| `StaticDecomposition<T>` | class | Pre-defined task breakdown via `DecompositionMethod` guard evaluation |
+| `StaticDecomposition<T>` | class | Pre-defined task breakdown via `DecompositionMethod` guard evaluation; pre-filters methods whose `estimatedCost`/`estimatedDuration` exceed `context.constraints()` before guard evaluation |
 | `ForwardReasoningDecomposition<T>` | class | SHOP-style forward reasoning -- applies `PrimitiveTask.effect()` to projected state copy during planning |
 | `LlmDecomposition<T>` | class | LLM-driven decomposition. Recursive multi-level planning via `maxDepth`. Parses JSON response to create `PlannedTask` or `CompoundTask` nodes. |
 | `HybridDecomposition<T>` | class | Static-first with LLM fallback. Passes `staticFailureHint` from failed static method to LLM context. |
@@ -154,7 +311,7 @@ Compositional agentic orchestration framework -- ten sub-packages implementing f
 | `StructuralCostHeuristic<T>` | class | Structural cost estimation: scores by negative estimated cost. Leaf=1, compound=min of methods, opaque=configurable default. |
 | `CompositeHeuristic<T>` | class | Weighted combination of multiple heuristics with min-max normalisation. Inner type: `WeightedHeuristic<T>(heuristic, weight)`. |
 | `NoMethodMatchedException` | class | Extends `IllegalStateException`. Fields: `taskName`, `methodCount`. Thrown when no decomposition method's guard matches. |
-| `AgenticDecompositionContext<T>` | record | Implements `DecompositionContext<T>`. Fields: `state`, `agents`, `depth`, `staticFailureHint`, `subtaskDescription`, `parentGoal`, `siblingNames`, `decomposer`. |
+| `AgenticDecompositionContext<T>` | record | Implements `DecompositionContext<T>`. Fields: `state`, `agents`, `depth`, `staticFailureHint`, `subtaskDescription`, `parentGoal`, `siblingNames`, `decomposer`, `planningConstraints`. Overrides `constraints()` to return `planningConstraints` (defaults to `unconstrained()` when null). |
 | `GoapDecompositionContext<T>` | record | Implements `DecompositionContext<T>`. Fields: `state`, `agents`, `depth`, `goalTypes`, `availableTypes`. |
 
 #### `agentic.activation` -- Activation SPI
@@ -183,7 +340,7 @@ Compositional agentic orchestration framework -- ten sub-packages implementing f
 
 | Class | Type | What it does |
 |-------|------|-------------|
-| `TerminationCondition<T>` | interface | SPI: `evaluate(TerminationContext<T>) -> Uni<TerminationDecision>` |
+| `TerminationCondition<T>` | interface | SPI: `evaluate(TerminationContext<T>) -> TerminationDecision`. Composable via `or(other)` (either can terminate) and `and(other)` (both must agree). Priority-aware: Escalate > Failed > Complete > Continue. |
 | `TerminationContext<T>` | record | Context: `state` (T), `iterationCount`, `elapsed` (Duration), `results` (List<AgentResult>) |
 | `TerminationDecision` | sealed interface | Four outcomes: `Continue` (singleton INSTANCE), `Complete(result)`, `Failed(reason)`, `Escalate(reason)` |
 | `Termination` | final class | Factory: `goalReached(Predicate)`, `maxIterations(int)` |
@@ -208,10 +365,20 @@ Compositional agentic orchestration framework -- ten sub-packages implementing f
 | `ExecutionState` | sealed interface | Seven states: `Idle`, `Running(iteration)`, `WaitingForAgent(agent)`, `WaitingForEvent`, `Complete`, `Faulted`, `Cancelled` |
 | `ExecutionEventListener` | interface | Callback SPI with default no-ops: `onRoutingDecision()`, `onActivation()`, `onAgentDispatched()`, `onAgentResult()`, `onAggregation()`, `onTermination()`, `onStateTransition()`, `onFailure()`, `onExecutionStart()`, `onExecutionComplete()`. Static method: `agentName(AgentRef)`. |
 | `AgentInvoker<T>` | @FunctionalInterface | Agent dispatch: `invoke(AgentRef, T) -> Uni<AgentResult>`. Default: `withFallback(AgentInvoker)`. Static `defaultInvoker()` handles ExternalAgent/ComposedAgent, returns failure for others. |
-| `ExecutionBackend<T>` | @FunctionalInterface | Top-level entry: `execute(ExecutionModel<T>, T) -> Uni<ExecutionResult>`. Static: `orchestrated()`, `orchestrated(AgentInvoker)`. |
+| `ExecutionBackend<T>` | @FunctionalInterface | Top-level entry: `execute(ExecutionModel<T>, T) -> Uni<ExecutionResult>`, `cancel()` (default no-op). Static: `reactive()`, `reactive(AgentInvoker)` — return `CancellableBackend` wrapping `OrchestratedDriver`. |
 | `OrchestratedDriver<T>` | class | Imperative while-loop execution driver |
 | `ChoreographedDriver<T>` | class | Event-reactive execution driver |
 | `PatternType` | enum | `SEQUENCE`, `PARALLEL`, `LOOP`, `CONDITIONAL`, `SUPERVISOR`, `DEBATE`, `VOTING`, `HTN`. Method: `isWorkflowShaped()` (true for first four). |
+
+#### `agentic.channel` -- Inter-Agent Channels + Supervisor Observation
+
+| Class | Type | What it does |
+|-------|------|-------------|
+| `ChannelBinding` | record | Binds a channel to execution: `channelId` (UUID), `semantic` (ChannelSemantic). |
+| `ChannelConfig` | record | Channel setup: `channelManager`, `messageDispatcher`, `semantic`, `protocols`. Factory: `of(channelManager, dispatcher, semantic)`. |
+| `ChannelExecutionStrategy<T>` | sealed interface | Execution strategy for channel-based agent communication. Three variants: `Conversation` (wraps ConversationOrchestrator), `FanIn` (parallel dispatch, sequential collection), `Barrier` (parallel dispatch, barrier sync). |
+| `ChannelObserver<S>` | class | Supervisor observation API. Implements both `MessageObserver` (qhorus CDI-based dispatch) and `EventSource` (ChoreographedDriver wake-up). Folds channel messages through `ChannelProjection<S>` via `AtomicReference.updateAndGet()`. `currentState()` returns the projected state. `reset()` clears state between executions. `terminateWhen(Predicate<S>)` and `asTermination(Function<S, TerminationDecision>)` create `TerminationCondition<T>` instances that read from the projection. Factory: `of(projection, channelName)`. Builder: `builder(projection).channel(name1).channel(name2).build()` for multi-channel observation. |
+| `ChannelTeardownListener` | class | Cleans up channels on execution completion. |
 
 #### `agentic.listener` -- Accountability Listeners
 
@@ -254,7 +421,7 @@ AI-powered `AgentRoutingStrategy` implementations for the engine's routing pipel
 
 | Class | Type | What it does |
 |-------|------|-------------|
-| `LlmAgentRoutingStrategy` | class (@ApplicationScoped) | Strategy id: `"llm"`. LLM reasoning about which candidate best fits the task. Composable prompt enrichment via `RoutingPromptAssembler`. Trust filtering via `RoutingSupport.applyTrustFilter()`. |
+| `LlmAgentRoutingStrategy` | class (@ApplicationScoped) | Strategy id: `"llm"`. LLM reasoning about which candidate best fits the task. Composable prompt enrichment via `RoutingPromptAssembler` with configurable char budget (`casehub.blocks.routing.llm.prompt-budget-chars`, default: unlimited). Trust filtering via `RoutingSupport.applyTrustFilter()`. |
 | `CbrAgentRoutingStrategy` | class (@ApplicationScoped) | Strategy id: `"cbr"`. Case-based evidence with similarity-weighted scoring via `ExperienceAnalyser.workerSuccessRates()`. Falls back to `AgentGraphQuery.topAgentsByOutcome()`, then `TrustCandidateClassifier.decide`. |
 | `PlanCompositionAnalyser` | class (@ApplicationScoped) | `RoutingSignalProvider` (id: `"plan-composition"`). Scores candidates based on case-level outcomes in multi-step plans (planTrace.size() >= 2). |
 | `PredecessorAnalyser` | class (@ApplicationScoped) | `RoutingSignalProvider` (id: `"predecessor"`). Scores candidates based on immediate predecessor context in historical plan traces. |
@@ -318,6 +485,40 @@ Affordance grounding -- per-entity observation rendering for LLM agents.
 | `ActionDescriptor` | record | Action type metadata: `actionType`, `description`, `parameterFormat` (nullable) |
 | `ObservationSection` | sealed interface | Document structure: `EntityGroup(header, emptyMessage, entities)`, `TextBlock(header, content)`, `ItemList(header, emptyMessage, items)`. Static factories: `entities()`, `text()`, `items()`. |
 | `AffordanceRenderer` | class | Renders `ObservableEntity` lists and `ObservationSection` trees into plain text. Methods: `renderEntities()`, `renderObservation()`, `renderActionVocabulary()`, `withHeaderFormatter()`. |
+| `ResolutionTier` | enum | Rendering fidelity: `FULL`, `REDUCED`, `SUMMARY`. Used by `AnnotatedSection` for capability-driven observation filtering. |
+| `AnnotatedSection` | record | Wraps `ObservationSection` with capability metadata: `requiredTags` (Set), `resolutionAlternatives` (Map<ResolutionTier, ObservationSection>), `interpretiveFrame` (nullable String). Implements `ObservationSection`. |
+| `ObservationFilter` | interface | `@FunctionalInterface` SPI: `List<ObservationSection> filter(List<ObservationSection>, Set<String> agentTags)`. Pipeline stage for filtering/transforming observation sections. |
+| `ObservationPipeline` | class | Ordered `ObservationFilter` composition. `apply(sections, agentTags)` runs all stages, then unwraps `AnnotatedSection` to base `ObservationSection`. |
+| `PerceptionFilter` | class | Built-in `ObservationFilter`: visibility gating (drop sections whose `requiredTags` don't intersect `agentTags`) + resolution fallback (degrade to lower `ResolutionTier` on partial match). |
+
+### `io.casehub.blocks.speech` (module: `blocks-speech-api`)
+
+Speech capability SPIs — provider-agnostic interfaces for audio-to-text and text-to-audio. Zero foundation dependencies.
+
+| Class | Type | What it does |
+|-------|------|-------------|
+| `SpeechToTextService` | interface | `transcribe(Path audioFile, TranscriptionOptions) → TranscriptionResult` |
+| `TextToSpeechService` | interface | `synthesise(String text, SynthesisOptions) → SynthesisResult` |
+| `TranscriptionResult` | record | `text`, `language`, `origin` |
+| `SynthesisResult` | record | `audioData` (byte[]), `audioFormat`, `phonemes` (List<PhonemeTiming>) |
+| `PhonemeTiming` | record | `phoneme`, `startMs`, `endMs` — for downstream lip-sync |
+
+### `io.casehub.blocks.speech.sherpa` (module: `blocks-speech-sherpa`)
+
+Default speech implementation via sherpa-onnx FFM/Panama (JDK 22+). Optional — consumers that only need the SPI depend on `blocks-speech-api`.
+
+| Class | Type | What it does |
+|-------|------|-------------|
+| `SherpaOnnxSpeechToText` | class | Whisper-based STT via FFM downcalls to sherpa-onnx offline recognizer |
+| `SherpaOnnxTextToSpeech` | class | VITS/Piper-based TTS via FFM downcalls to sherpa-onnx offline TTS |
+| `SherpaConfig` | record | `modelDir`, `numThreads`, `provider` (cpu/coreml/cuda) |
+
+**Quick start:**
+```java
+var config = SherpaConfig.defaults(Path.of("/path/to/models"));
+var stt = new SherpaOnnxSpeechToText(config);
+TranscriptionResult result = stt.transcribe(audioFile, TranscriptionOptions.defaults());
+```
 
 ## Key Integration Patterns
 

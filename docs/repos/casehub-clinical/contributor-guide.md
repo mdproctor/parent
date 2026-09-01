@@ -203,7 +203,7 @@ Central facade for CBR operations. Provides `retrieveWithAudit()` — retrieves 
 
 ### AeCbrFeatureBuilder
 
-Builds CBR query features from `AdverseEvent` entities. Extracts: grade (numeric 1-5), eventType, trialPhase, unexpected, suspected, treatmentArm, priorAeCount, and outcome features (safetyReviewOutcome, dsmbEscalated, indReportFiled, susarOversight) weighted 0.0 for input queries.
+Static utility — builds CBR features from `AeCbrContext` record. 14 features: grade (numeric 1-5), eventType (categoricalList), trialPhase, unexpected, suspected, treatmentArm, priorAeCount, safetyReviewOutcome, dsmbEscalated, indReportFiled, susarOversight, siteEnrollmentCount, siteTargetEnrollment, agentTrustScore. `buildQueryFeatures()` excludes outcome-only features (agentTrustScore). Schema also registers `mergeCount` for compaction (15 fields total).
 
 ### ClinicalCaseOutcomeObserver
 
@@ -253,6 +253,10 @@ Configurable via MicroProfile Config:
 ### CbrRetentionPurgeJob
 
 Scheduled job for CBR case retention — purges old cases per configurable retention policy.
+
+### CbrCompactionJob
+
+Scheduled job — merges similar `clinical-ae` CBR cases into weighted representatives. Groups by exact categorical merge key (grade, eventType, trialPhase, unexpected, suspected). Weighted-average numerics by `mergeCount`, majority-vote categoricals. Disabled by default (`casehub.clinical.cbr.compaction.enabled=false`). Runs after retention purge.
 
 ### Precedent Storage
 

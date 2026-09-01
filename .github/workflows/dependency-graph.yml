@@ -1,0 +1,41 @@
+name: Generate Dependency Graph
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Clone child repos
+        run: |
+          mkdir -p /tmp/casehub
+          repos="platform worker ledger connectors work qhorus eidos neocortex engine iot ras desiredstate blocks blocks-ui claudony openclaw workers ops pages devtown aml clinical life drafthouse quarkmind soc fsitrading chat-app flow"
+          for repo in $repos; do
+            gh repo clone casehubio/$repo /tmp/casehub/$repo -- --depth 1 2>/dev/null || echo "Skipping $repo"
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Generate graph
+        run: python3 scripts/generate-dependency-graph.py /tmp/casehub
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add dependency-graph.json
+          git diff --cached --quiet || git commit -m "chore: update dependency-graph.json [skip ci]"
+          git push

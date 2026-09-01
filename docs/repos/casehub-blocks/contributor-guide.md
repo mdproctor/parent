@@ -88,12 +88,12 @@ Nine decomposition strategies with increasing sophistication:
 | Strategy | Approach | Key Internal Detail |
 |----------|----------|---------------------|
 | `IdentityDecomposition` | Pass-through -- wraps single task as-is | Throws on CompoundTask input |
-| `StaticDecomposition` | Pre-defined task breakdown via `DecompositionMethod` | First-match guard evaluation |
+| `StaticDecomposition` | Pre-defined task breakdown via `DecompositionMethod` | First-match guard evaluation; pre-filters methods by `estimatedCost`/`estimatedDuration` against `context.constraints()` |
 | `SequenceStrategy` | Package-private: resolves children sequentially using composed decomposer | Used internally by `Tasks.compound()` and `Tasks.decompose()` |
 | `ForwardReasoningDecomposition` | SHOP-style forward reasoning -- applies `PrimitiveTask.effect()` to projected state | Uses `UnaryOperator<T> stateCopier` to clone state before effect application |
 | `LlmDecomposition` | Recursive multi-level LLM planning via `maxDepth` | Parses JSON: `[{"agent":..., "task":..., "rationale":...}]` for leaves, `{"subtask":..., "description":...}` for compounds |
 | `HybridDecomposition` | Static-first with LLM fallback on `NoMethodMatchedException` | Passes `staticFailureHint` (failed method's task name + method count) to LLM context |
-| `GoalOrientedDecomposition` | GOAP backward-chaining from goal state | Matches goal types to agent capabilities via preconditions/effects, builds dependency DAG via `GoapDecompositionContext` |
+| `CapabilityDependencyDecomposition` | GOAP backward-chaining from goal state | Matches goal types to agent capabilities via preconditions/effects, builds dependency DAG via `CapabilityDependencyContext` |
 | `HeuristicDecomposition` | Ranked method selection via `DecompositionHeuristic<T>` | Tries methods in score order, backtracks on `NoMethodMatchedException`. Uses `ScoredMethod<T>` |
 | `CompositeHeuristic` | Weighted combination of multiple `DecompositionHeuristic<T>` | Min-max normalisation across delegates. Inner: `WeightedHeuristic<T>(heuristic, weight)` |
 
@@ -204,6 +204,67 @@ Terminal consumer of the summarisation pipeline -- tiered, demand-driven renderi
 - `withHeaderFormatter(Function<String, String>)` -- returns a new renderer with custom header formatting
 
 `ObservationSection` is a sealed interface with three variants: `EntityGroup`, `TextBlock`, `ItemList`. Static factories: `entities()`, `text()`, `items()`.
+
+### Drive Architecture (Compositor Pattern)
+
+The drive sub-package (`agentic.social.drive`) follows a *compositor pattern* that deliberately breaks the universal `record()` + `tick()` contract used by all six social cognition orchestrators. Drives consume derived state from other orchestrators rather than accumulating raw signals, so `record()` has nothing to accumulate.
+
+**Lifecycle:** `DriveOrchestrator.tick(agentId, tenantId, AgentDescriptor)` evaluates four `DriveSource` implementations, delegates modulation and composition to `DriveComposer`, and caches the resulting `DriveProfile`. `currentDrives(agentId, tenantId)` returns the cached state. Per-agent `ReentrantLock` guards `tick()` -- same concurrency model as other orchestrators.
+
+**DriveSource SPI:** `@FunctionalInterface` with `DriveIntensity evaluate(agentId, tenantId)`. Each implementation takes its source orchestrator as a constructor dependency and reads its public accessors. Each concrete implementation caches the intermediate data read during `evaluate()` and exposes it via a typed accessor (`lastGaps()`, `lastTrend()`, `lastProfiles()`, `lastSnapshots()`). Goal mappers consume this cached data instead of re-querying the source orchestrators. `DriveOrchestrator` exposes concrete sources via `curiosityDrive()` etc. (null for lambda fallbacks). Analogous to `TraitPressureSource<E>` in personality evolution, but pull-based (reads at tick-time) rather than push-based (translates events at record-time).
+
+**Modulation flow:** Raw intensities from four sources → mood modulation (PAD axes from `MoodOrchestrator.currentMood()`) → personality modulation (`AgentDescriptor.disposition()` weights per `DispositionAxis`) → intensity clamping → weighted composition → `DriveProfile`.
+
+**CDI management:** `DriveOrchestrator` and `DriveComposer` are `@ApplicationScoped`. DriveOrchestrator's `@Inject` constructor takes `Instance<MemoryHygieneOrchestrator>` (optional -- curiosity drive returns zero when hygiene is not CDI-managed), `StrategyLearningOrchestrator`, `UserModelOrchestrator`, `MentalModelOrchestrator`, `MoodOrchestrator`, `DriveComposer`, and `DriveConfig`. Drive sources are constructed internally -- they are not CDI beans. Per-drive config params (affiliation decay threshold, stale duration, autonomy confidence floor) are in `DriveConfig`.
+
+**Lifecycle wiring:** `InnerLifeOrchestrator` injects `DriveOrchestrator` and calls `tick()` at the start of `doTick()`. This ensures drives are computed before inner life logic runs. The scheduler owns the full tick ordering: source orchestrators → `DriveOrchestrator` → `GoalProposalOrchestrator`.
+
+**Observation rendering:** `CognitiveObservationSections.motivationalStateSection(DriveProfile)` renders the drive profile as an `ObservationSection.ItemList`. Per-axis items show intensity (1dp) and trigger provenance. Axes below 0.05 intensity are filtered. Downstream apps include this section in their `WorldObservationProvider` implementation.
+
+**Upstream API additions for drive sources:**
+- `MemoryHygieneOrchestrator.knowledgeGaps()` → `KnowledgeGapSummary` (in `blocks.memory`)
+- `StrategyLearningOrchestrator.engagementTrend()` → `EngagementTrend` (in `blocks.agentic.social`)
+- `UserModelOrchestrator.activeProfiles()` → cross-subject profile aggregation
+- `MentalModelOrchestrator.activeSnapshots()` → cross-subject mental model aggregation
+
+### Goal Proposal (Compositor Pattern)
+
+The goal sub-package (`agentic.social.goal`) is Layer 2 of the autonomous intelligence stack. It translates drive signals into concrete `AgentGoal` proposals that the engine's existing goal lifecycle can decompose and execute.
+
+**Compositor guarantee:** `GoalProposalOrchestrator.tick()` evaluates mappers, caches proposals, and returns the result -- no side effects. The scheduler reads `currentProposals()` (or the tick result) and calls `GoalFormationService.propose()` (engine-api) to register goals. This enables inspection of proposals before registration and aligns with the engine's `autoApprove` governance.
+
+**DriveGoalMapper SPI:** `@FunctionalInterface` with `@Nullable DriveGoalProposal evaluate(agentId, tenantId, DriveIntensity)`. Each implementation injects the corresponding concrete `DriveSource` (e.g., `CuriosityGoalMapper` takes `CuriosityDrive`) and reads cached intermediate data via the `last*()` accessor. Returns null when no goal is warranted or cached data is null. Four implementations: `CuriosityGoalMapper`, `CompetenceGoalMapper`, `AffiliationGoalMapper`, `AutonomyGoalMapper`.
+
+**Capacity and lifecycle:** Drive-sourced goals occupy a separate budget (`maxDriveGoals=3` of `MAX_GOALS=10`). Proposals ranked by drive intensity when exceeding capacity. Relevance re-evaluation abandons goals when the originating drive drops below `relevanceThreshold` for longer than `staleAfter`. Failure-abandoned goals (via `GoalSignalStore`) are suppressed from re-proposal.
+
+**Engine integration (Batch 2):** `GoalFormationService` SPI in engine-api extracts case-independent goal registration (validation, deduplication, capacity, audit) from `GoalFormationEvaluator`. `GoalRemovalService` SPI provides reusable goal removal with audit. `ProposedGoal` gains `@Nullable Map<String, String> attributes` for goal provenance. Drive-sourced goals store `{"source": "drive", "driveAxis": "CURIOSITY"}`.
+
+**LLM goal formation:** `DriveGoalFormationStrategy` SPI with `LlmDriveGoalFormationStrategy` implementation provides drive-specific LLM prompt framing as an opt-in alternative to heuristic mappers. Accepts `DriveGoalFormationContext` (axis, intensity, trigger, existing goals, remaining capacity) and produces richer `DriveGoalProposal` descriptions via `AgentProvider`. Graceful degradation on LLM failure. Follows the heuristic/LLM tiering pattern from summarisation.
+
+**Consumer integration:** The scheduler (quarkmind, claudony, etc.) wires the full tick loop -- source orchestrators → DriveOrchestrator → GoalProposalOrchestrator → GoalFormationService. See spec §Consumer Integration Example for the complete flow.
+
+### Narrative Identity (Compositor + Effectful Split)
+
+Layer 3a of the autonomous intelligence stack. Agents construct a first-person autobiography from accumulated reflections. The architecture splits into effectful synthesis and side-effect-free orchestration:
+
+- **NarrativeSynthesiser** (`@ApplicationScoped`, effectful) -- composite gate evaluation (count + novelty + quiet period), LLM synthesis via `AgentProvider`, writes `NarrativeState` to `NarrativeStore`. Called by the consumer's scheduler before the compositor ticks.
+- **NarrativeOrchestrator** (`@ApplicationScoped`, compositor) -- reads `NarrativeStore`, caches `NarrativeState` per agent, returns `NarrativeTick` (Updated/NoChange). No LLM, no side effects.
+- **GroupNarrativeOrchestrator** (compositor, not CDI-managed) -- GROUP-scoped mirror of NarrativeOrchestrator. Consumer constructs with `Set<String> memberIds`. `tick(groupId, tenantId)` detects new `GroupEpisode`s and themes.
+
+**Persistence:** `NarrativeStore` SPI with `CbrNarrativeStore` `@DefaultBean`. `NarrativeStateSchema` handles polymorphic `NarrativeFragment` serialization (type discriminators for `IndividualEpisode`/`GroupEpisode`/`DerivedTheme`). `ReflectionQueryStore` SPI provides read access to stored reflections for synthesis.
+
+**Drive modulation:** `NarrativeModulation.compute(NarrativeState)` converts themes to per-axis drive coefficients. `DriveOrchestrator` reads from `NarrativeOrchestrator` via `Instance<>` (optional) and passes modulation to `DriveComposer`. Works identically for individual and group narratives.
+
+**Tick ordering:** Source orchestrators → NarrativeSynthesiser → NarrativeOrchestrator → DriveOrchestrator → GoalProposalOrchestrator.
+
+### Social Emergence
+
+Layer 3b -- collective behaviors emerging from multi-agent interaction.
+
+- **SocialNormDetector** (`@ApplicationScoped`, compositor) -- reads `NormObservation` cases from CBR, groups by `behavioralPattern`, computes adherence rates, classifies strength (EMERGING/ESTABLISHED/DECLINING). Per-tenant caching with prior-state tracking for decline detection. `NormObservationSchema` for CBR serialization.
+- **CollectiveGoalFormation** (compositor, not CDI-managed) -- reads N agents' `DriveProfile`s, computes pairwise alignment (`1 - |diff|` per axis), forms groups via connected components, proposes `CollectiveGoalProposal`s when composite alignment exceeds threshold. Per-group cooldown. `toJointIntention()` bridges proposals to `JointIntention.form()`.
+
+**Consumer construction:** `CollectiveGoalFormation` takes `DriveOrchestrator`, `List<String> agentIds`, and `CollectiveGoalConfig` at construction. The agent set is deployment-time configuration -- consumers produce the bean via `@Produces` or construct directly.
 
 ## Trust Routing Architecture
 

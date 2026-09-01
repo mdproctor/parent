@@ -16,7 +16,7 @@
   - Strategy: `DroolsStrategyTask` (primary Drools Rule Units), `EarlyPressureStrategyTask`, `EconomicExpansionStrategyTask` (competing L6 strategies)
   - Economics: `BasicEconomicsTask` (Java), `FlowEconomicsTask` (Quarkus Flow)
   - Tactics: `DroolsTacticsTask` (Drools + GOAP), `BasicTacticsTask` (Java fallback)
-  - Scouting: `BasicScoutingTask` (Java), `DroolsScoutingTask` (Drools CEP + `PatternClassifier`)
+  - Scouting: `BasicScoutingTask` (Java), `DroolsScoutingTask` (Drools CEP + `CascadingPatternClassifier`)
 - **Strategy routing:** `SC2StrategyRouterTask` (CBR-based), `DispositionAwareRoutingStrategy`, `QuarkMindTrustRoutingPolicyProvider`
 - **`QuarkMindCaseFile`** -- 30 CaseFile key constants covering observation state, resource budget, agent strategy, intel, commentary triggers, coaching triggers
 - **SC2 engine seam:** `SC2Engine` interface; `IntentQueue`; `GameStarted`/`GameStopped` CDI events; sealed `Intent` interface (6 permits: `BuildIntent`, `TrainIntent`, `AttackIntent`, `MoveIntent`, `BlinkIntent`, `MuleCalldownIntent`); `TimedIntent`
@@ -31,8 +31,8 @@
 - **LLM advisory team:** 12 `AgentDescriptor` configurations in `QuarkMindAgentRegistrar`: 6 advisory (crisis/strategic/economic x 2 dispositions), 4 commentary (reactive/narrative x 2 dispositions), 2 coaching (directive/socratic). `DispositionAwareRoutingStrategy`, `AdvisoryWorkerFactory`, multi-dimensional trust scoring via `MilestoneOutcomeRecorder`.
 - **Commentary system:** `CommentaryWorkerFactory` creates reactive + narrative workers; `CommentaryAccumulator` manages output accumulation; `CommentaryTriggerBuilder` generates triggers from game events; `NarrativeContextHolder` maintains cross-tick narrative state
 - **Coaching system:** `CoachingWorkerFactory`, `CoachingTriggerBuilder`, `CoachingComplianceEvaluator` (position-based verification: `ArmyCentroidMovement`, `ExpansionPlacement`, `UnitsNearLocation`, `LocationResolver`), `CoachingSessionSelector`, `CoachingEffectivenessTrustRecorder`
-- **Enemy strategy classifier:** `PatternClassifier` + `PatternClassificationRuleUnit` (Drools CEP); `ConfidenceRevision` (decay, counter-indication, multi-archetype publishing); race guards prevent false positives in cross-race matchups
-- **Dominance assessment:** `MultiFactorDominanceAssessor` (economy, tech, army value, base count); `DominanceWeightStrategy` SPI with `TemporalDominanceWeightStrategy`, `SituationalDominanceWeightStrategy`, `DroolsDominanceWeightStrategy` (DRL rule-driven); `WeightContext`, `WeightModifier`
+- **Enemy strategy classifier:** `CascadingPatternClassifier` (three-tier cascade: Drools → ONNX → LLM) + `PatternClassificationRuleUnit` (Drools CEP); `ConfidenceRevision` (decay, counter-indication, multi-archetype publishing); `AssessmentSource` tags tier origin; `StrategyFeatureExtractor` encodes game state to ONNX tensor; race guards prevent false positives in cross-race matchups
+- **Dominance assessment:** `MultiFactorDominanceAssessor` (economy, tech, army value, base count); `DominanceWeightStrategy` SPI with `TemporalDominanceWeightStrategy`, `SituationalDominanceWeightStrategy` (deprecated), `DroolsDominanceWeightStrategy` (DRL rule-driven); `WeightContext`, `WeightModifier`
 - **Strategy taxonomy:** `StrategyTaxonomy` -- 58 `StrategyArchetype` entries across all 3 races, 3 game phases, 6 categories; matchup-keyed counter data (`CounterEntry`, `CounterInfo`)
 - **Dynamic phase detection:** `StateBasedPhaseResolver` implements `PhaseResolver`; resolves `GamePhase` from supply thresholds, expansion count, tech tier presence, and game time
 - **CBR integration:** `SC2StrategyRouterTask` queries `CbrCaseMemoryStore` for past game experiences; `SC2GameCbrCase` captures matchup + game state features; `SC2CbrRetentionObserver` records outcomes
@@ -62,8 +62,7 @@ src/main/java/io/quarkmind/
   sc2/map/             MapDownloader, SC2MapCache, SC2MapTerrainExtractor
   agent/               AgentOrchestrator, GameStateTranslator, GameTickExecutor,
                        QuarkMindCaseHub, QuarkMindCaseFile, TickOrchestratorWorker,
-                       MutableMapCaseContext, MapCaseContext, PluginDispatchBroker,
-                       PluginOutcomeAuditor, GameSession, ResourceBudget
+                       PluginDispatchBroker, PluginOutcomeAuditor, GameSession, ResourceBudget
   agent/plugin/        StrategyTask, EconomicsTask, TacticsTask, ScoutingTask,
                        ScoutingIntelConsumer, ScoutingIntelPayload, ScoutingIntelType,
                        MomentDetectionSeam, SummarisationTickable
@@ -75,7 +74,7 @@ src/main/java/io/quarkmind/
                        WeightContext, WeightModifier,
                        DispositionAwareRoutingStrategy, StrategyTaxonomy,
                        StateBasedPhaseResolver, PhaseResolverProducer,
-                       MilestoneOutcomeRecorder, MilestoneConfig, MilestoneSession,
+                       MilestoneOutcomeRecorder, MilestoneConfig,
                        MilestoneTrigger, MilestoneEvent,
                        ScoutingIntelBroker, PluginDecisionEvent, AdvisoryTriggerBuilder
   plugin/              DroolsStrategyTask, BasicEconomicsTask, BasicScoutingTask,
@@ -98,7 +97,8 @@ src/main/java/io/quarkmind/
                        AdvisoryFact
   plugin/flow/         EconomicsFlow, FlowEconomicsTask, EconomicsDecisionService,
                        EconomicsLifecycle, GameStateTick
-  plugin/scouting/     DroolsScoutingTask, PatternClassifier,
+  plugin/scouting/     DroolsScoutingTask, CascadingPatternClassifier,
+                       StrategyFeatureExtractor, CascadeResult,
                        PatternClassificationRuleUnit, ScoutingRuleUnit,
                        ConfidenceRevision, EvidenceMarker, ScoutingSessionManager,
                        events: EnemyArmyNearBase, EnemyExpansionSeen, EnemyUnitFirstSeen
@@ -136,7 +136,8 @@ src/main/java/io/quarkmind/
 | Plugin dispatch | `PluginDispatchBroker` | DECLINE/DONE on plugin activation transitions; writable context with delta tracking via `MutableMapCaseContext` |
 | Adaptive selection | Binding conditions | Plugin selection based on game state in CaseFile; `requires()` + `activateIf()` two-stage gate |
 | Durable execution | Quarkus Flow | `FlowEconomicsTask` -- build order execution with retry |
-| Rule-based reasoning | Drools 10.1.0 | `DroolsStrategyTask`, `DroolsTacticsTask`, `DroolsScoutingTask`, `PatternClassifier`, `DroolsDominanceWeightStrategy` |
+| Rule-based reasoning | Drools 10.1.0 | `DroolsStrategyTask`, `DroolsTacticsTask`, `DroolsScoutingTask`, `CascadingPatternClassifier`, `DroolsDominanceWeightStrategy` |
+| ONNX inference | `casehub-neocortex` inference | `CascadingPatternClassifier` optional ONNX tier via `Instance<InferenceModel>`; `StrategyFeatureExtractor`; `TensorClassifier` from inference-tasks |
 | Typed advisory channel | `casehub-qhorus` | `ScoutingIntelBroker` publishes to `quarkmind-scouting-intel`; LLM advisors subscribe as `MessageObserver`; coaching channel separate |
 | Trust-weighted routing | `casehub-ledger` | Four-phase Bayesian Beta maturity; `MilestoneOutcomeRecorder` writes intra-game trust attestations at configurable milestones |
 | CBR experience learning | `casehub-neocortex` | `SC2StrategyRouterTask` queries `CbrCaseMemoryStore`; `SC2CbrRetentionObserver` records game outcomes with strategy features |
@@ -182,7 +183,7 @@ Each plugin seam is a CDI interface extending `TaskDefinition`. Swap an implemen
 
 ### Enemy Strategy Classifier
 
-`PatternClassifier` invokes `PatternClassificationRuleUnit` with Drools CEP rules. Rules are race-guarded to prevent false positives (e.g., `PROTOSS_CANNON_RUSH` cannot match in non-Protoss matchups). `ConfidenceRevision` applies temporal decay, counter-indication suppression, and multi-archetype publishing. Classification accuracy calibrated at >= 70% acceptance criterion against IEM10 replay dataset.
+`CascadingPatternClassifier` orchestrates a three-tier cascade: Drools (fast, deterministic) → ONNX (fast, learned) → LLM (slow, flexible). `PatternClassificationRuleUnit` fires Drools CEP rules to produce evidence markers. If Drools confidence exceeds the threshold (0.7), the cascade resolves immediately. Otherwise, `StrategyFeatureExtractor` encodes game state as a tensor for the optional ONNX tier via `TensorClassifier`. If ONNX confidence exceeds its threshold (0.5), it resolves. Otherwise, an async LLM fallback triggers. Each assessment is tagged with `AssessmentSource` (DROOLS/ONNX/LLM). Rules are race-guarded to prevent false positives. `ConfidenceRevision` applies temporal decay and counter-indication suppression. Classification accuracy calibrated at >= 70% against IEM10 replay dataset.
 
 ### Dominance Assessment Pipeline
 
@@ -292,8 +293,10 @@ Three.js 3D visualizer renders game state each tick, served over WebSocket, wrap
 | Component | Role |
 |-----------|------|
 | `GameStateBroadcaster` | `SC2Engine` frame listener; pushes JSON to all WebSocket clients per tick |
-| `visualizer.js` | Three.js WebGL: 3D terrain, directional canvas-2D sprite textures, fog of war, health tinting, unit/building inspect panel, SC2-style and free-orbit camera |
-| `visualizer.html` | Loads three.min.js + visualizer.js; no build step |
+| `visualizer.js` | Three.js WebGL: 3D terrain, directional canvas-2D sprite textures, fog of war, health tinting, unit/building inspect panel overlay, SC2-style and free-orbit camera |
+| `visualizer.html` | Loads `blocks/workbench-blocks.js` (Vite-built Lit components), three.min.js, and visualizer.js; Quinoa manages the webui build |
+| `src/main/webui/` | Vite + Lit project: `qm-pattern-page`, `qm-coaching-page`, `qm-strategy-page`, `qm-commentary-page` render inside `<blocks-detail-pane>` Shadow DOM |
+| `WorkbenchSocket` | WebSocket endpoint (`/ws/workbench`); pushes pattern/strategy/coaching/commentary events and commentary history-on-connect |
 | `electron/main.js` | Spawns Quarkus as subprocess, health-polls, opens OS window |
 
 **Renderer migration:** PixiJS 8 (E1-E13) replaced by Three.js (E14) for 3D orbiting camera, terrain height, directional sprite sheets.

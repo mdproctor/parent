@@ -1,4 +1,4 @@
-# io.casehub.qhorus.api.channel.ChannelSummary.Builder
+# io.casehub.qhorus.api.channel.ThreadSummary.Builder
 
 **Package:** `io.casehub.qhorus.api.channel`
 
@@ -12,15 +12,11 @@
 
 ### `content` (`java.lang.String`)
 
+### `correlationId` (`java.lang.String`)
+
 ### `id` (`java.util.UUID`)
 
-### `lastUpdatedMessageId` (`java.lang.Long`)
-
 ### `tenancyId` (`java.lang.String`)
-
-### `updateAfterMessages` (`java.lang.Integer`)
-
-### `updateAfterSeconds` (`java.lang.Integer`)
 
 ### `updatedAt` (`java.time.Instant`)
 
@@ -28,65 +24,48 @@
 
 ## Constructors
 
-### `private Builder(java.util.UUID channelId)`
+### `private Builder(java.util.UUID channelId, java.lang.String correlationId)`
 
 #### Parameters
 
 - `channelId` (`java.util.UUID`)
+- `correlationId` (`java.lang.String`)
 
 ## Methods
 
-### `public io.casehub.qhorus.api.channel.ChannelSummary.Builder annotations(java.util.Map<java.lang.String,java.lang.String> v)`
+### `public io.casehub.qhorus.api.channel.ThreadSummary.Builder annotations(java.util.Map<java.lang.String,java.lang.String> v)`
 
 #### Parameters
 
 - `v` (`java.util.Map<java.lang.String,java.lang.String>`)
 
-### `public io.casehub.qhorus.api.channel.ChannelSummary build()`
+### `public io.casehub.qhorus.api.channel.ThreadSummary build()`
 
-### `public io.casehub.qhorus.api.channel.ChannelSummary.Builder content(java.lang.String v)`
+### `public io.casehub.qhorus.api.channel.ThreadSummary.Builder content(java.lang.String v)`
 
 #### Parameters
 
 - `v` (`java.lang.String`)
 
-### `public io.casehub.qhorus.api.channel.ChannelSummary.Builder id(java.util.UUID v)`
+### `public io.casehub.qhorus.api.channel.ThreadSummary.Builder id(java.util.UUID v)`
 
 #### Parameters
 
 - `v` (`java.util.UUID`)
 
-### `public io.casehub.qhorus.api.channel.ChannelSummary.Builder lastUpdatedMessageId(java.lang.Long v)`
-
-#### Parameters
-
-- `v` (`java.lang.Long`)
-
-### `public io.casehub.qhorus.api.channel.ChannelSummary.Builder tenancyId(java.lang.String v)`
+### `public io.casehub.qhorus.api.channel.ThreadSummary.Builder tenancyId(java.lang.String v)`
 
 #### Parameters
 
 - `v` (`java.lang.String`)
 
-### `public io.casehub.qhorus.api.channel.ChannelSummary.Builder updateAfterMessages(java.lang.Integer v)`
-
-#### Parameters
-
-- `v` (`java.lang.Integer`)
-
-### `public io.casehub.qhorus.api.channel.ChannelSummary.Builder updateAfterSeconds(java.lang.Integer v)`
-
-#### Parameters
-
-- `v` (`java.lang.Integer`)
-
-### `public io.casehub.qhorus.api.channel.ChannelSummary.Builder updatedAt(java.time.Instant v)`
+### `public io.casehub.qhorus.api.channel.ThreadSummary.Builder updatedAt(java.time.Instant v)`
 
 #### Parameters
 
 - `v` (`java.time.Instant`)
 
-### `public io.casehub.qhorus.api.channel.ChannelSummary.Builder updatedBy(java.lang.String v)`
+### `public io.casehub.qhorus.api.channel.ThreadSummary.Builder updatedBy(java.lang.String v)`
 
 #### Parameters
 

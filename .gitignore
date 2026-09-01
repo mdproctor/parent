@@ -24,3 +24,8 @@ proj
 __pycache__/
 .playwright-mcp/
 .build/
+.mvn/maven.config
+.mvn/slot-settings.xml
+.worktrees
+.worktrees/
+.claude/

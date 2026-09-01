@@ -22,7 +22,7 @@ The biological metaphor is deliberate: a ganglion is a neural cluster that detec
 | `api/` | `casehub-ras-api` | Always — core SPIs, domain types, `JavaSwitchGanglion` base class. No CDI. |
 | `runtime/` | `casehub-ras` | Always — CDI runtime, `RasEngine`, `NaiveBayesGanglion`, `ExpressionRulesGanglion`, `EvidenceExtractingGanglion`, YAML definitions. Quarkus extension. |
 | `persistence-memory/` | `casehub-ras-persistence-memory` | Dev/test — `@Alternative @Priority(100)`, ConcurrentHashMap-backed. Zero config. |
-| `persistence-jpa/` | `casehub-ras-persistence-jpa` | Production — JPA-backed with dual-layer OCC. Flyway V1-V6. Add `classpath:db/ras/migration` to `quarkus.flyway.locations`. |
+| `persistence-jpa/` | `casehub-ras-persistence-jpa` | Production — JPA-backed with dual-layer OCC. Flyway V1-V7 (V7: ras_outcome_record). Add `classpath:db/ras/migration` to `quarkus.flyway.locations`. |
 | `ras-drools/` | `casehub-ras-drools` | Optional — Drools CEP stream-mode ganglion with long-lived/ephemeral sessions. |
 | `drools-reliability/` | `casehub-ras-drools-reliability` | Optional — persistent `DroolsSessionStore` backed by H2MVStore. Experimental. |
 | `ras-llm/` | `casehub-ras-llm` | Optional — LLM-based ganglion (POM placeholder, no source yet). |
@@ -178,14 +178,56 @@ Returns a `PolicyDecision` wrapping a `TriggerDecision` plus optional metadata. 
 - Dynamic confidence expressions in expression-rules (`confidenceExpression` per rule)
 - Situation templates: `fromTemplate:` + `parameters:` with `${param}` substitution. Deep merge of consumer overrides.
 - Built-in templates: `streak-breach`, `threshold-crossing`, `count-accumulation`, `rate-breach`
+- Feedback loop: optional `feedback:` section on situations, `outcomeGroundTruth:` on NaiveBayes ganglia
 
 ### YAML Ganglia
 
 Ganglia can be defined entirely in YAML without CDI beans:
 
-**NaiveBayes** — `type: naive-bayes` with `ganglionId`, `handledEventTypes`, `outcomes` (min 2), `priors` (must sum to 1.0), `features` (each with `expression`, `values`, `likelihoods`), `signalMapping` (`targetOutcome`, `detectedThreshold`, `weakThreshold`, optional `antiThreshold`), optional `evidenceTemplates`, optional `outcomeEvidenceTemplates`.
+**NaiveBayes** — `type: naive-bayes` with `ganglionId`, `handledEventTypes`, `outcomes` (min 2), `priors` (must sum to 1.0), `features` (each with `expression`, `values`, `likelihoods`), `signalMapping` (`targetOutcome`, `detectedThreshold`, `weakThreshold`, optional `antiThreshold`), optional `evidenceTemplates`, optional `outcomeEvidenceTemplates`, optional `outcomeGroundTruth` (maps case outcome labels to NaiveBayes outcome names — enables feedback-driven prior recalibration).
 
 **ExpressionRules** — `type: expression-rules` with `ganglionId`, `handledEventTypes`, `rules` (ordered list). Each rule has `when` (expression) or `otherwise` (catch-all, must be last), `signal`, `confidence` (0.0-1.0), optional `confidenceExpression` (overrides static confidence), optional per-rule `evidenceTemplates`. Ganglion-level `evidenceTemplates` wrapped via `EvidenceExtractingGanglion` decorator.
+
+### Feedback Configuration
+
+Optional `feedback:` section on situation definitions enables the sense-decide-act-learn loop. Case outcomes feed back into detection via suppression, threshold drift, and prior recalibration.
+
+```yaml
+situations:
+  - situationId: fraud-detection
+    eventTypes: [payment.flagged]
+    chainMode:
+      type: threshold
+      ganglia: [fraud-nb]
+      minConfidence: 0.7
+    triggerAction:
+      type: create-case
+      caseNamespace: compliance
+      caseName: fraud
+      caseVersion: "1.0"
+    feedback:
+      noiseLabels: [dismissed, false-positive]
+      confirmedLabels: [escalated]
+      suppressionCooldown: PT6H
+      learningRate: 0.1
+      retentionPeriod: P90D
+      tuningEnabled: true
+```
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `noiseLabels` | yes | — | Case outcome labels classified as noise (suppression candidates) |
+| `confirmedLabels` | yes | — | Case outcome labels classified as confirmed signals |
+| `suppressionCooldown` | yes | — | ISO 8601 duration — suppress events for this correlation key after a noise dismissal |
+| `learningRate` | yes | — | Tuning step size, (0.0, 1.0] |
+| `retentionPeriod` | yes | — | ISO 8601 duration — how long outcome records are kept (must be >= cooldown) |
+| `tuningEnabled` | no | `false` | Advisory mode (default): suppression + metrics only. Set `true` for automatic threshold/prior adjustment. |
+
+**Two modes:**
+- **Advisory** (`tuningEnabled: false`) — suppression and metrics always active. The system learns what's noise and stops re-raising dismissed situations during the cooldown period. No detection parameters are changed.
+- **Tuning** (`tuningEnabled: true`) — additionally adjusts `ChainMode.Threshold` minConfidence based on noise rate, and recalibrates NaiveBayes priors using outcome-to-outcome mapping via `outcomeGroundTruth` on the ganglion descriptor.
+
+**NaiveBayes outcomeGroundTruth** — maps case outcome labels (e.g. `escalated`, `dismissed`) to NaiveBayes outcome names (e.g. `fraud`, `legitimate`). Required for prior recalibration; without it, only threshold adjustment applies.
 
 ---
 
@@ -205,6 +247,26 @@ RAS is a pure CloudEvent consumer. Platform stream modules produce CloudEvents a
 
 ---
 
+## Meta-Situations
+
+Meta-situations compose multiple situations into higher-order detections. Features include cycle detection (prevents infinite meta-situation loops) and deadline triggers (time-bounded escalation). `SituationReplayRunner.drainAllDeadlines()` advances all pending deadline triggers without real-time waits for deterministic testing.
+
+---
+
+## Missed Detection and Feedback Tuning
+
+**MissedDetectionRecorder:** Records situations that should have been detected but were missed. REST endpoint: `POST /api/ras/feedback/missed`. Persistence: `MissedDetectionEntity` (JPA, Flyway V9-V10). Deduplication via `OutcomeLedger.recordMissed()`. `MissedDetectionRecord` carries ganglion IDs (JSONB).
+
+**Recall metrics:** `OutcomeStatistics.recall()` computes the ratio of true detections to total expected (detected + missed). `GanglionOutcomeStatistics.missedCount` tracks per-ganglion miss counts.
+
+**Drift classification:** `FeedbackTuningStrategy.classifyDrift()` default method detects when detection rates diverge from baselines. `DriftDirection` enum: `RISING`, `FALLING`, `STABLE`, `BOTH_DRIFTING`. `FeedbackConfig` carries drift thresholds and `crossRefWindow`.
+
+**Feedback metrics:** Per-ganglion recall gauge + drift state-gauge for monitoring. `FeedbackUpdateJob` publishes drift assessments with `BOTH_DRIFTING` guard.
+
+**Cross-reference:** Missed detection records cross-referenced with trigger history for root cause analysis.
+
+---
+
 ## Configuration Properties
 
 | Property | Default | Purpose |
@@ -213,6 +275,33 @@ RAS is a pure CloudEvent consumer. Platform stream modules produce CloudEvents a
 | `ras.evaluator.max-conflict-retries` | `3` | Max OCC retry attempts per event in `SituationEvaluator` |
 | `ras.evaluator.trigger-guard-period` | `PT1M` | How long triggered entities are kept before cleanup |
 | `ras.event-history.retention` | `P30D` | Retention period for situation event history (JPA module) |
+| `ras.feedback.update-interval` | `PT5M` | How often the feedback update job runs (threshold/prior adjustment, cleanup) |
+
+---
+
+## Situation Replay
+
+`SituationReplayRunner` validates situation definitions against historical CloudEvent streams without side effects. Uses the real detection pipeline (`SituationEvaluator.evaluate()`) — deterministic, time-aware.
+
+```java
+var result = SituationReplayRunner.builder()
+    .withYaml("META-INF/ras-situations.yaml")       // or .withRegistrations(...)
+    .withGanglia(List.of(myGanglion))
+    .withEvents(historicalCloudEvents)
+    .build()
+    .run();
+
+result.didTrigger("my-situation-id");                // quick check
+result.triggers();                                   // full trigger details
+result.stateFor("sit-1", "corr-key", "tenant-a");   // accumulated detection state
+result.summary();                                    // aggregate stats
+```
+
+**Error handling:** `ReplayErrorHandling.STRICT` (default) throws on routing errors; `LENIENT` skips and records in `result.skippedEvents()`. Unmatched event types are silently skipped in both modes.
+
+**Feedback opt-in:** Suppression, outcome ledger, and threshold adjustment are excluded by default (clean-room detection). Opt in independently via `.withSuppressionStrategy()`, `.withOutcomeLedger()`, `.withFeedbackState()`.
+
+**Event reorder buffer:** Situations with `eventBufferDelay` use the production buffer. Remaining buffered events are flushed automatically after all events are processed.
 
 ---
 

@@ -31,6 +31,7 @@ Any Quarkus app adds `io.casehub:casehub-qhorus` as a dependency and its agents 
 | `webhook-observer` | `casehub-qhorus-webhook-observer` | Optional -- HTTP POST webhook callbacks with HMAC-SHA256 signing |
 | `notification-bridge` | `casehub-qhorus-notification-bridge` | Optional -- commitment lifecycle to platform subscription engine |
 | `postgres-broadcaster` | `casehub-qhorus-postgres-broadcaster` | Optional -- cross-node delivery via PostgreSQL LISTEN/NOTIFY |
+| `compliance-report` | `casehub-qhorus-compliance-report` | Optional -- EU AI Act compliance evidence export (attribution, obligation, violation, trust history, provenance, judgment attribution, judgment fulfillment reports). Supports JSON, CSV, HTML, and PDF formats via `Accept` header content negotiation. PDF requires `casehub-platform-pdf` on classpath for PDF/A-2b output |
 
 Optional modules activate by classpath presence -- no configuration needed beyond adding the dependency.
 
@@ -66,6 +67,7 @@ Channel fields (all nullable unless specified):
 | `protocols` | Named protocol enforcement rules (e.g. `REQUEST_RESPONSE`) |
 | `protocolParticipants` | Agents subject to protocol enforcement |
 | `trackDelivery` | Opt-in per-participant delivery tracking via cursor extension |
+| `routingTrustThreshold` | Minimum trust score for capability-based routing (`role:` targets); null = global default |
 | `paused` | When true, dispatch gate rejects all writes |
 | `spaceId` | Parent space for organizational hierarchy |
 | `autoCreated` | Whether the channel was auto-created via `findOrCreate` |
@@ -84,12 +86,15 @@ Channel fields (all nullable unless specified):
 | `HANDOFF` | Delegate COMMAND to another agent | Transfers obligation | No |
 | `DONE` | Successful COMMAND completion | No | Yes |
 | `FAILURE` | Failed COMMAND | No | Yes |
+| `PROPOSE` | Conditional commitment (commissive) | Yes -- DONE (accept), DECLINE (reject), or RESPONSE (non-fulfilling) | No |
 | `EVENT` | Telemetry / observer signal | No | N/A -- excluded from agent context |
+
+`PROPOSE` is the commissive speech act: "I will do X if you agree." Unlike COMMAND, RESPONSE on a PROPOSE does **not** auto-fulfill the commitment -- only DONE (explicit acceptance) fulfills. This enables counter-proposal exchange without premature commitment closure.
 
 Utility methods on `MessageType`:
 - `isAgentVisible()` -- true for all except `EVENT`
-- `requiresCorrelationId()` -- true for `QUERY` and `COMMAND`
-- `requiresContent()` -- true for `DECLINE` and `FAILURE`
+- `requiresCorrelationId()` -- true for `QUERY`, `COMMAND`, and `PROPOSE`
+- `requiresContent()` -- true for `DECLINE`, `FAILURE`, and `PROPOSE`
 - `requiresTarget()` -- true for `HANDOFF`
 - `isTerminal()` -- true for `HANDOFF`, `DONE`, `FAILURE`
 
@@ -156,13 +161,14 @@ Pipeline (in order):
 1. **Paused check** -- rejects if channel is paused
 2. **`AllowedWritersPolicy`** -- ACL enforcement
 3. **`RateLimiter`** -- per-channel and per-instance rate limiting
-4. **`ObligorTrustPolicy` SPI** -- trust threshold for COMMAND dispatch
-5. **`MessageTypePolicy`** -- `allowedTypes`/`deniedTypes` enforcement
-6. **`CorrelationIntegrityChecker`** -- advisory: validates `inReplyTo` and `correlationId` consistency
-7. **`ProtocolEvaluation`** -- advisory: channel protocol enforcement via `ProtocolRegistry`
-8. **LAST_WRITE overwrite** -- version-aware overwrite semantics for `LAST_WRITE` channels
-9. **`LedgerWriteService.record()`** -- tamper-evident ledger entry
-10. **`ChannelGateway.fanOut()`** -- backend delivery and observer notification
+4. **`RoutingBridge`** -- resolves `role:X` capability targets to specific agents via eidos `AgentSelector`; non-role targets bypass (zero overhead)
+5. **`ObligorTrustPolicy` SPI** -- trust threshold for COMMAND dispatch
+6. **`MessageTypePolicy`** -- `allowedTypes`/`deniedTypes` enforcement
+7. **`CorrelationIntegrityChecker`** -- advisory: validates `inReplyTo` and `correlationId` consistency
+8. **`ProtocolEvaluation`** -- advisory: channel protocol enforcement via `ProtocolRegistry`
+9. **LAST_WRITE overwrite** -- version-aware overwrite semantics for `LAST_WRITE` channels
+10. **`LedgerWriteService.record()`** -- tamper-evident ledger entry
+11. **`ChannelGateway.fanOut()`** -- backend delivery and observer notification
 
 There is no bypass path.
 
@@ -388,7 +394,7 @@ Configurable condition monitoring with 11 watchdog condition types:
 
 ### MCP Tool Surface
 
-Qhorus exposes MCP tools scoped to `@McpServer("qhorus")` across capability groups: instance management, channel management, backend management, messaging, shared data, commitments, normative ledger queries, spaces, topics, presence, membership, reactions, projections, and watchdogs.
+Qhorus exposes MCP tools scoped to `@McpServer("qhorus")` across capability groups: instance management, channel management, backend management, messaging, shared data, commitments, normative ledger queries, spaces, topics, presence, membership, reactions, projections, watchdogs, and routing diagnostics.
 
 ### REST API
 
@@ -410,6 +416,7 @@ Qhorus exposes MCP tools scoped to `@McpServer("qhorus")` across capability grou
 | `PUT` | `/api/channels/{id}/protocols` | Set protocol enforcement |
 | `PUT` | `/api/channels/{id}/protocol-participants` | Set protocol participants |
 | `PUT` | `/api/channels/{id}/delivery-tracking` | Enable/disable delivery tracking |
+| `PUT` | `/api/channels/{id}/routing-config` | Set routing trust threshold |
 
 Channel resolution supports both UUID and name lookups in the `{id}` path parameter.
 

@@ -11,7 +11,7 @@
 | Module | artifactId | Type | Purpose |
 |---|---|---|---|
 | `api/` | `casehub-eidos-api` | Pure Java, no CDI | SPIs and domain types -- `AgentDescriptor`, `AgentRegistry`, `CapabilityHealth`, `VocabularyRegistry`, `SystemPromptRenderer`, `AgentStateStore`, `BehavioralSignalStore`, `DispositionHealth`, `DispositionEvolution`, `DispositionSignalStore`, `RenderedPromptCache`, `TemplateRegistry`; sealed types: `MatchDegree` (Exact, Plugin, Specialization, None), `CapabilityStatus`, `DispositionStatus`, `EvolutionResult`; utilities: `CapabilityResolver`, `BehavioralExpectations`, `AgentDescriptorComparator`; template types: `DescriptorTemplate`, `TemplateRef`; SPI package (`api.spi`): `AgentDescriptorRegistrar`, `VocabularyRegistrar`, `TemplateRegistrar`; graph SPIs (also in api/): `AgentGraphStore`, `AgentGraphQuery`, `AgentGraphBackfill`, `TaskSemanticEnricher` |
-| `runtime/` | `casehub-eidos` | Quarkus extension | CDI registry, health implementations, renderer, JPA persistence, Flyway migrations. Subpackages: `registry/jpa/` (JPA registries, entity classes, mapper), `vocabulary/` (`CdiVocabularyRegistry`), `health/` (default health + signal stores + compliance), `health/jpa/` (JPA-backed signal stores), `registrar/` (bootstrap + YAML loading + descriptor collector), `template/` (`CdiTemplateRegistry`, `ClasspathYamlTemplateRegistrar`), `renderer/` (`EidosSystemPromptRenderer`, enrichment pipeline, `JsonExtractionUtil`, `NoOpRenderedPromptCache`), `preferences/` (preference keys and defaults), `graph/` (NoOp graph implementations) |
+| `runtime/` | `casehub-eidos` | Quarkus extension | CDI registry, health implementations, renderer, JPA persistence, Flyway migrations. Subpackages: `registry/jpa/` (JPA registries, entity classes, mapper), `vocabulary/` (`CdiVocabularyRegistry`), `health/` (default health + signal stores + compliance), `health/jpa/` (JPA-backed signal stores), `registrar/` (bootstrap + YAML loading + descriptor collector), `yaml/` (`EidosDescriptorModule`, `DescriptorPreprocessor`, `DescriptorForEachAdapter`), `template/` (`CdiTemplateRegistry`, `ClasspathYamlTemplateRegistrar`), `renderer/` (`EidosSystemPromptRenderer`, enrichment pipeline, `JsonExtractionUtil`, `NoOpRenderedPromptCache`), `preferences/` (preference keys and defaults), `graph/` (NoOp graph implementations) |
 | `persistence-memory/` | `casehub-eidos-memory` | Optional module | `@Alternative @Priority(1)` in-memory implementations: `InMemoryAgentRegistry`, `InMemoryTemplateRegistry`, `InMemoryAgentStateStore`, `InMemoryBehavioralSignalStore` (per-signal TTL via `@ConfigProperty`), `InMemoryDispositionSignalStore` (ConcurrentHashMap + AtomicInteger, no TTL), `InMemoryRenderedPromptCache` |
 | `deployment/` | `casehub-eidos-deployment` | Quarkus build step | `EidosProcessor` -- registers the `eidos` feature and includes Flyway SQL resources in native image builds |
 | `vocab/` | `casehub-eidos-vocab` | Optional module | Well-known vocabularies: `SvoTerm`, `ConscientiousnessTerm`, `CasehubSlotTerm`, `BelbinTerm` (9 Belbin team roles), `DiscTerm` (4 DISC types, `axisExactMatch`), `ThomasKilmannTerm` (5 conflict modes), `CasehubCapabilityTerm` (hierarchical capability taxonomy), `JungianFunctionTerm` (8 cognitive functions with `axisExactMatch`, `shadow()`, `opposite()`, `compatibleAuxiliaries()`), `MbtiTypeTerm` (16 MBTI types with `specializes()` to `JungianFunctionTerm`, `defaultProfile()`), `JungianEvolutionType` (4 JPAF reflection types), `FunctionCategory` (JUDGING/PERCEIVING), `FunctionAttitude` (INTROVERTED/EXTRAVERTED). Each vocabulary enum accompanied by a `VocabularyRegistrar` bean; Jandex-indexed for CDI discovery |
@@ -33,7 +33,7 @@ Signal-parameterized SPI in `casehub-eidos-api` for learned behavioral patterns.
 - `learned(agentId, tenancyId, capabilityName, signal)` returns `Map<String, Integer>` -- qualifier to count
 - `count(agentId, tenancyId, capabilityName, qualifier, signal)` returns `int`
 - Per-signal TTL independently configurable via `@ConfigProperty`
-- V5 schema migration (table with `signal_type` discriminator column)
+- Schema in V1 initial migration (table with `signal_type` discriminator column)
 
 **capabilityName contract:** All methods require the agent's *declared* capability name (from `AgentCapability.name()`), not a query/lookup term. When the caller has a query tag, use `CapabilityResolver.resolve()` to obtain the declared capability first.
 
@@ -84,7 +84,7 @@ SPI for cognitive function activation tracking, used by JPAF personality adaptat
 
 No TTL -- decay is explicit via `decay()` or `clear()`.
 
-CDI ladder: `NoOpDispositionSignalStore @DefaultBean`, `InMemoryDispositionSignalStore @Alternative` in `casehub-eidos-memory` (ConcurrentHashMap + AtomicInteger), `JpaDispositionSignalStore @IfBuildProperty` in runtime (Flyway V9).
+CDI ladder: `NoOpDispositionSignalStore @DefaultBean`, `InMemoryDispositionSignalStore @Alternative` in `casehub-eidos-memory` (ConcurrentHashMap + AtomicInteger), `JpaDispositionSignalStore @IfBuildProperty` in runtime.
 
 ### DispositionHealth and Evolution
 
@@ -171,6 +171,9 @@ Key renderer components:
 - Scans `META-INF/eidos/descriptors.yaml` from classpath
 - Multiple YAML files across JARs are merged
 - Supports all `AgentDescriptor` fields including `mbtiType` (auto-resolves to `MbtiTypeTerm.defaultProfile()`) and `dispositionProfile`
+- Two-pass pipeline: plain ObjectMapper (lenient) parses to generic `Map<String, Object>`, then `DescriptorPreprocessor` runs yaml-core preprocessing (variables, forEach, when, CSV), then `EidosDescriptorModule` (strict) deserializes each resolved map
+- `DescriptorPreprocessor` (in `runtime/yaml/`): orchestrates the pipeline — extracts `variables`/`iterations`/`dataSources` sections, builds `VariableResolver` with `var` + `config` sources, expands forEach via `ForEachExpander` (string-based) or directly (CSV rows with `withEachRowContext`), evaluates `when` conditions via `Truthiness`
+- `DescriptorForEachAdapter` (in `runtime/yaml/`): adapts `Map<String, Object>` descriptor maps to yaml-core's `ForEachAdapter` interface; strips `forEach`/`when` before variable resolution
 
 ### Template System
 
@@ -327,15 +330,8 @@ Baseline: `eval-baseline-2026-06-10.json` committed as reference.
 
 | Version | Module | Content |
 |---|---|---|
-| V1 | runtime | Initial schema -- agent descriptor, capabilities |
-| V2 | runtime | Agent degradation state |
+| V1 | runtime | Full schema -- agent descriptor, capabilities, degradation state, capability specialization, behavioral signals, goals, constraints, disposition signals, goal signals |
 | V3 | graph | Agent graph (task, outcome, attestation tables) |
-| V4 | runtime | Capability specialization table |
-| V5 | runtime | Behavioral signal table (signal_type discriminator) |
-| V6 | runtime | Capability description column |
-| V7 | runtime | Descriptor templates |
-| V8 | runtime | Goals and constraints tables |
-| V9 | runtime | Disposition signal table |
 
 No existing installations -- no deployed instances in production. All schema changes go directly into base migration files.
 

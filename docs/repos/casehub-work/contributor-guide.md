@@ -29,14 +29,14 @@
 
 | Module | Artifact | Type | Purpose |
 |--------|----------|------|---------|
-| `engine-adapter/` | `casehub-work-engine-adapter` | Bridge | Two-way bridge between engine PlanItems and work WorkItems. Contains: `HumanTaskScheduleHandler` (outbound: engine -> work), `WorkItemLifecycleAdapter` (inbound: work -> engine), `PlanItemCompletionApplier` (transition routing), `ActionGateWorkItemHandler` + `ActionGateCompletionApplier` + `ActionGateCancelledHandler` (oversight gate bridge), `WorkStrategyContributor` (NamedStrategy registration), `HumanTaskRecoveryService` (startup recovery), `JpaPlanItemStore`, `WorkAdapterPlanItemEntity`, `CallerRef` sealed interface with `PlanItemCallerRef` + `GateCallerRef` variants. Lives here (not in engine) because the bridge owns the WorkItem entity and transaction boundaries. |
+| `engine-adapter/` | `casehub-work-engine-adapter` | Bridge | Two-way bridge between engine PlanItems and work WorkItems. Contains: `HumanTaskScheduleHandler` (outbound: engine -> work), `WorkItemLifecycleAdapter` (inbound: work -> engine), `PlanItemCompletionApplier` (transition routing), `ActionGateWorkItemHandler` + `ActionGateCompletionApplier` + `ActionGateCancelledHandler` (oversight gate bridge), `WorkStrategyContributor` (NamedStrategy registration), `HumanTaskRecoveryService` (startup recovery), `JpaPlanItemStore`, `WorkAdapterPlanItemEntity`, `CallerRef` sealed interface with `PlanItemRef` + `GateRef` variants. Lives here (not in engine) because the bridge owns the WorkItem entity and transaction boundaries. |
 | `flow/` | `casehub-work-flow` | Jandex library | `WorkItemsFlow` (extends Quarkus-Flow's `Flow`), `HumanTaskFlowBridge` (CDI bridge creating WorkItems and returning `Uni<String>` that suspends the workflow), `WorkItemTaskBuilder` (fluent DSL: `.title()`, `.description()`, `.assigneeId()`, `.candidateGroups()`, `.priority()`, `.payloadFrom()`, `.buildTask()`), `PendingWorkItemRegistry` (in-memory CompletableFuture registry), `WorkItemFlowEventListener` (lifecycle observer that resolves pending futures), `WorkItemResolutionException`. |
 | `ledger/` | `casehub-work-ledger` | Optional | `LedgerEventCapture` (observes lifecycle events, writes ledger entries), `WorkItemLedgerEntry` entity, `WorkItemLedgerEntryRepository` SPI + `JpaWorkItemLedgerEntryRepository`, REST: `LedgerResource` (queries, provenance, attestation), `ActorTrustResource` (trust scores), DTOs for attestation and provenance. |
 | `queues/` | `casehub-work-queues` | Optional | `QueueMembershipService`, `FilterEvaluationObserver`, `QueueSnapshotJob` (scheduled trend data collection), `WorkItemQueueEventBroadcaster` SPI + `LocalWorkItemQueueEventBroadcaster`, `WorkItemQueueMetrics`, `QueueResource` + `QueueStateResource` (REST), `WorkItemQueueState` + `QueueSnapshot` entities, `QueueSnapshotStore` + `QueueStateStore` + `WorkItemViewQuery` repositories, `QueueSnapshotInterval` + `QueueTrendRetention` config, `QueuesRlsPolicyApplicator`. |
 | `queues-dashboard/` | `casehub-work-queues-dashboard` | Optional | `QueueDashboard` (SSE-driven TUI), `QueueBoardBuilder`, `DashboardMain`, `ReviewStepService`, `SecurityWritersFilter`. |
 | `queues-postgres-broadcaster/` | — | Optional | `PostgresWorkItemQueueEventBroadcaster` — distributed SSE via PostgreSQL LISTEN/NOTIFY for queue events. |
 | `ai/` | `casehub-work-ai` | Optional | `SemanticWorkerSelectionStrategy` (embedding-based routing), `EmbeddingSkillMatcher`, `CapabilitiesSkillProfileProvider`, `CompositeSkillProfileProvider`, `ResolutionHistorySkillProfileProvider`, `WorkerProfileSkillProfileProvider`, `WorkerSkillProfile` entity, `EscalationSummaryObserver` + `EscalationSummaryService` + `EscalationSummary` entity, `ResolutionSuggestionService` + `ResolutionSuggestionResource`, `LowConfidenceFilterProducer` (queue filter for AI confidence), REST: `WorkerSkillProfileResource`, `EscalationSummaryResource`, `ResolutionSuggestionResource`, `AiRlsPolicyApplicator`. |
-| `notifications/` | `casehub-work-notifications` | Optional | `NotificationDispatcher` (lifecycle event observer), channels: `SlackNotificationChannel`, `TeamsNotificationChannel`, `HttpWebhookChannel`, `WorkItemNotificationRule` entity + `NotificationRuleStore`, REST: `NotificationRuleResource`, `NotificationsRlsPolicyApplicator`. |
+| ~~`notifications/`~~ | ~~`casehub-work-notifications`~~ | **Removed** | Replaced by platform subscription engine (#315). `WorkItemSubscriptionBridge` in `runtime/` inserts lifecycle events into the platform DataSource. `WorkItemLifecycleEvent` implements `SubscribableEvent`. |
 | `reports/` | `casehub-work-reports` | Optional | `ReportService`, `SlaBreachReport` + `SlaBreachItem`, `SlaSummary`, `ThroughputReport` + `ThroughputBucket` + `ThroughputBucketAggregator`, `QueueHealthReport`, `ActorReport`, REST: `ReportResource`. |
 | `issue-tracker/` | `casehub-work-issue-tracker` | Optional | `IssueLinkService`, `IssueTrackerProvider` SPI + `GitHubIssueTrackerProvider`, `JiraIssueTrackerConfig`/`GitHubIssueTrackerConfig`, `WorkItemIssueLink` entity + `IssueLinkStore`, webhook handling: `WebhookEventHandler` + `WebhookEvent` + `WebhookEventKind`, `GitHubWebhookResource` + `GitHubWebhookParser`, `JiraWebhookResource` + `JiraWebhookParser`, `ExternalIssueRef`, `NormativeResolution` (speech-act-based: DONE/DECLINE/FAILURE), `IssueTrackerRlsPolicyApplicator`. |
 | `postgres-broadcaster/` | — | Optional | `PostgresWorkItemEventBroadcaster` + `WorkItemEventPayload` — distributed SSE for WorkItem lifecycle events via PostgreSQL LISTEN/NOTIFY. |
@@ -71,9 +71,9 @@
 
 The two-way bridge between engine PlanItems and work WorkItems was relocated from engine (#290). It lives in casehub-work because the bridge owns the WorkItem entity and transaction boundaries.
 
-**Outbound (engine -> work):** `HumanTaskScheduleHandler` receives `HumanTaskScheduleEvent` from the engine and creates a WorkItem via `WorkItemCreator.create()`. Uses `CallerRef` sealed interface with two variants: `PlanItemCallerRef` (standard human tasks) and `GateCallerRef` (oversight gates). Threads `candidateScores` and `routingExperiences` from the engine's evaluation context.
+**Outbound (engine -> work):** `HumanTaskScheduleHandler` receives `HumanTaskScheduleEvent` from the engine and creates a WorkItem via `WorkItemCreator.create()`. Uses `CallerRef` sealed interface with two variants: `PlanItemRef` (standard human tasks) and `GateRef` (oversight gates). Threads `candidateScores` and `routingExperiences` from the engine's evaluation context.
 
-**Inbound (work -> engine):** `WorkItemLifecycleAdapter` observes `WorkItemLifecycleEvent` CDI events and routes terminal transitions back to the engine via `PlanItemCompletionApplier`. Handles resolution data, outcome, rationale, and planRef fields. For multi-approver gates, aggregates `approvedBy` from child WorkItems via `WorkItemCreator.findChildApprovers()`.
+**Inbound (work -> engine):** `WorkItemLifecycleAdapter` observes `WorkItemLifecycleEvent` CDI events and routes terminal transitions back to the engine via `PlanItemCompletionApplier`. Threads `ledgerEntryId` (set by `LedgerEventCapture` on the event via `LedgerEntryIdSetter` SPI) through to both `PlanItemCompletionApplier` and `ActionGateCompletionApplier` for cross-ledger causal linking. Handles resolution data, outcome, rationale, and planRef fields. For multi-approver gates, aggregates `approvedBy` from child WorkItems via `WorkItemCreator.findChildApprovers()`.
 
 **Action gates:** `ActionGateWorkItemHandler` creates WorkItems for oversight gates (human approval before automated actions). `ActionGateCompletionApplier` routes gate completions. `ActionGateCancelledHandler` handles gate cancellation.
 
@@ -81,7 +81,7 @@ The two-way bridge between engine PlanItems and work WorkItems was relocated fro
 
 **Strategy registration:** `WorkStrategyContributor` contributes work-module NamedStrategy beans to the engine's `EngineStrategyResolver`.
 
-**CallerRef format:** `PlanItemCallerRef` encodes `case:{caseId}/pi:{planItemId}`. `GateCallerRef` encodes `case:{caseId}/gate:{planItemId}`. Both parse via the `CallerRef` sealed interface.
+**CallerRef format:** `PlanItemRef` encodes `case:{caseId}/pi:{planItemId}`. `GateRef` encodes `case:{caseId}/gate:{gateId}`. Both parse via the `CallerRef` sealed interface, which extends `CrossSystemRef` (work-api) with `system()="engine"`. The qhorus module's `QhorusRef` similarly implements `CrossSystemRef` with `system()="qhorus"`.
 
 **Planning module dependency:** The adapter was migrated from `casehub-engine-blackboard` to `casehub-engine-planning` (#322).
 
@@ -91,7 +91,7 @@ The runtime defines 18+ store interfaces with JPA implementations:
 
 | Store | Entity | Tenant-Scoped? |
 |-------|--------|---------------|
-| `WorkItemStore` | `WorkItem` | yes |
+| `WorkItemStore` | `WorkItem` (api/ record) | yes |
 | `WorkItemTemplateStore` | `WorkItemTemplate` | yes |
 | `AuditEntryStore` | `AuditEntry` | yes |
 | `WorkItemScheduleStore` | `WorkItemSchedule` | yes |
@@ -103,7 +103,7 @@ The runtime defines 18+ store interfaces with JPA implementations:
 | `LabelVocabularyStore` | `LabelVocabulary` | yes |
 | `LabelRuleStore` | `LabelRuleEntity` | yes |
 | `RoutingCursorStore` | `RoutingCursor` | cross-tenant |
-| `CrossTenantWorkItemStore` | `WorkItem` | cross-tenant |
+| `CrossTenantWorkItemStore` | `WorkItem` (api/ record) | cross-tenant |
 | `CrossTenantWorkItemScheduleStore` | `WorkItemSchedule` | cross-tenant |
 | `CrossTenantRoutingCursorStore` | `RoutingCursor` | cross-tenant |
 
@@ -165,7 +165,7 @@ Three `HolidayCalendar` implementations:
 
 ## Notification Concern
 
-`casehub-work-notifications` ships Slack/Teams/webhook directly, overlapping with `casehub-connectors`. Open issue (#315) to migrate to platform subscription engine + connector bridge.
+**Resolved (#315).** The `casehub-work-notifications` module has been removed. Lifecycle event notifications now flow through the platform subscription engine via `WorkItemSubscriptionBridge` (in `runtime/`). `WorkItemLifecycleEvent` implements `SubscribableEvent` for type/tenant discrimination. The bridge is optional — active only when `casehub-platform` subscriptions module is on the classpath (`Instance<DataSourceRegistry>` unsatisfied = no-op).
 
 ## Recent Changes (since April 2026)
 
@@ -188,7 +188,7 @@ Three `HolidayCalendar` implementations:
 ## Pending Work
 
 - `casehub-work-qhorus` adapter — MCP tools for agent-driven approval flows
-- Notification migration (#315) — delegate to platform subscription engine + connectors
+- ~~Notification migration (#315)~~ — **done**: platform subscription engine + `WorkItemSubscriptionBridge`
 - Progress: visualisation modes (#309), rollback control (#308), arbitrary JSON schema shapes (#307)
 - Queue summary: caching (#306), database-level aggregation (#305)
 - CloudEvent bridge for cross-service HumanTask creation (#299)

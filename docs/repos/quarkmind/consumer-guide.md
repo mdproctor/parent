@@ -24,14 +24,14 @@ QuarkMind is a single-module Quarkus application (`quarkmind-agent`). Key struct
 | Area | What it covers |
 |------|---------------|
 | `domain/` | SC2 domain model -- game state, units, buildings, actions, intents; `SC2Data` (all game constants); `StrategyArchetype` (58 archetypes across all 3 races and 3 phases); `TechTree` prerequisite graph; `PhaseResolver` |
-| `agent/` | CaseHub intelligence layer -- `QuarkMindCaseFile` keys, `GameStateTranslator`, `AgentOrchestrator`, `QuarkMindCaseHub`, `TickOrchestratorWorker`, `MutableMapCaseContext` |
+| `agent/` | CaseHub intelligence layer -- `QuarkMindCaseFile` keys, `GameStateTranslator`, `AgentOrchestrator`, `QuarkMindCaseHub`, `TickOrchestratorWorker` |
 | `agent/plugin/` | Plugin seam interfaces -- `StrategyTask`, `EconomicsTask`, `TacticsTask`, `ScoutingTask`; scouting intel types (`ScoutingIntelType`, `ScoutingIntelPayload`, `ScoutingIntelConsumer`) |
 | `agent/cbr/` | CBR strategy routing -- `SC2StrategyRouterTask`, `SC2GameCbrCase`, `SC2CbrRetentionObserver`, `SC2ImplementationRoutingStrategy` |
 | `plugin/` | Active plugin implementations -- Drools and Flow-based |
 | `plugin/advisory/` | LLM advisory team -- `AdvisoryWorkerFactory`, `AdvisoryChannelBroker`, `QuarkMindAgentRegistrar` (12 eidos agent descriptors) |
 | `plugin/coaching/` | Coach mode -- `CoachingWorkerFactory`, `CoachingTriggerBuilder`, `CoachingComplianceEvaluator`, position-based verification |
 | `plugin/commentary/` | Commentator mode -- `CommentaryWorkerFactory`, `CommentaryAccumulator`, dual-pattern narration (reactive + narrative) |
-| `plugin/scouting/` | Drools CEP scouting -- `DroolsScoutingTask`, `PatternClassifier`, `ConfidenceRevision`, enemy strategy detection |
+| `plugin/scouting/` | Drools CEP scouting -- `DroolsScoutingTask`, `CascadingPatternClassifier`, `ConfidenceRevision`, enemy strategy detection |
 | `plugin/tactics/` | GOAP planning -- `GoapPlanner`, focus fire strategies (`FocusFireStrategy`, `LowestHpFocusFireStrategy`, `OverkillRedirectFocusFireStrategy`), kite strategies (`KiteStrategy`, `DirectKiteStrategy`, `TerrainAwareKiteStrategy`) |
 | `plugin/summarisation/` | Hierarchical event summarisation -- `MomentDetectionTask`, `GamePhaseSummariser`, `GameArcSummariser`; four-level temporal abstraction |
 | `plugin/flow/` | Quarkus Flow economics -- `EconomicsFlow`, `FlowEconomicsTask`, `EconomicsDecisionService`, `GameStateTick` |
@@ -173,6 +173,45 @@ quarkmind
   -> LangChain4j                            (LLM integration for advisory/commentary/coaching)
   -> Playwright 1.49.0                      (E2E visualizer testing, test scope)
 ```
+
+## Chat Agency System (quarkmind-chat)
+
+Multi-character AI orchestration for Discord-based social gameplay.
+
+### ChatAgencyLoop
+
+Core orchestration loop managing multi-character AI agents in Discord channels. Stateless design with `CharacterContext` per character (thread-safe via `ConcurrentHashMap.newKeySet()` for `participatedThreadIds`). Bounded buffers for message history and identity detection.
+
+### Chat Protocol
+
+- `ChatIntent` sealed interface + `ChatPerception` + `WakeReason` — core chat abstractions
+- `AttentionClassifier`, `ChatDeltaReport`, `OutputGovernor`, `ProactiveDecisionGate` — perception pipeline
+- `ChatNeedDefinitions` + `ChatChannelPacing` — configurable need thresholds and channel timing
+- `ChatObservationRenderer` + `ChatWorldBridge` — Discord adapter layer
+
+### Character Management
+
+`ChatCharacterManager` orchestrates multiple AI characters with distinct personalities.
+
+### Personality Evolution
+
+Personalities evolve based on gameplay reflections:
+- `ReflectionDispositionActivator` SPI + `PersonalityEvolutionPipeline`
+- `LlmReflectionDispositionActivator` — async LLM-based trait classification
+- `DispositionAwareReflectionSynthesizer` — intercepts insights for activation
+
+### Memory Integration
+
+- `ChatMemoryFacade` — recall, ingest, `scoreImportance`
+- `LlmReflectionSynthesizer` — LLM-based memory consolidation from heartbeat reflections
+- `IdleReflectionTrigger` — triggers reflection during idle periods
+- Commentary-CBR integration for narrating learning from past games
+
+### Blocks-UI Migration
+
+Workbench migrated to Lit web components via blocks-ui integration. Commentary pipeline and Playwright test suite rewritten for the new component architecture.
+
+---
 
 ## What It Does NOT Do
 

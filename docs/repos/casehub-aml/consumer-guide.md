@@ -54,7 +54,7 @@ Records in `api/src/main/java/io/casehub/aml/domain/`:
 - `SuspiciousTransaction` -- the flagged transaction that opens a case; fields: `id` (String), `flagReason` (FlagReason), `amount` (BigDecimal), `originAccountId`, `destinationAccountId`
 - `AmlInvestigationResult` -- investigation output: `summary`, `complianceReviewTaskId`, `caseId`, `ledgerCaseEntryId`
 - `InvestigationSummary` -- three `SpecialistOutcome<T>` fields for entity resolution, pattern analysis, OSINT
-- `SpecialistOutcome<T>` -- sealed interface: `Completed<T>`, `Declined`, `Failed`; pattern-matched in `SarDraftingService`
+- `SpecialistOutcome<T>` -- sealed interface: `Completed<T>`, `Declined`, `Failed`; pattern-matched in specialist workers
 - `EntityResolutionResult` -- gains `entityType` (EntityType enum) and `riskScore` (double) for PEP routing
 - `PatternAnalysisResult` -- pattern findings record
 - `OsintResult` -- OSINT screening result
@@ -98,7 +98,7 @@ Records in `api/src/main/java/io/casehub/aml/compliance/`:
 - `AuditChainRequirement` -- `FINCEN-31CFR1020.320-AUDIT-CHAIN`; includes `chainVerified`, `treeRoot`, per-event `AmlInclusionProof` list
 - `SlaRequirement` -- `FINCEN-SAR-30DAY-SLA`; includes deadline, completion time
 - `TrustRoutingRequirement` -- `FATF-R20-TRUST-ROUTING`
-- `GdprErasureRequirement` -- `GDPR-ART17-ERASURE`; dynamic -- queries config flags and receipt count
+- `GdprErasureRequirement` -- `GDPR-ART17-ERASURE`; dynamic -- queries config flags and receipt count; `retentionCitation` and `retentionAdrRef` surface Art.17(3)(b) regulatory retention exemption (ADR-0004)
 - `ActorErasureResult` -- flattened actor erasure result
 - `LedgerEventRecord`, `AmlInclusionProof`, `AmlProofStep` -- evidence structure types
 
@@ -153,7 +153,8 @@ Oversight case definition capabilities in `aml-oversight-investigation.yaml`:
 
 - `AmlLayer7Resource` -- `GET /api/investigations/{caseId}/compliance-evidence` (four requirement-scoped records with Merkle proofs)
 - `AmlGdprErasureResource` -- `POST /api/actors/{actorId}/erasure` (GDPR Art.17 actor-level erasure)
-- `AmlEntityErasureResource` -- `POST /api/entities/{entityId}/erasure` (entity-level memory erasure)
+- `AmlEntityErasureResource` -- `POST /api/entities/{entityId}/erasure` (entity-level memory erasure); `POST /api/tenants/{tenantId}/entities/{entityId}/erasure` (tenant-scoped); `POST /api/entities/{entityId}/erasure/all-tenants` (cross-tenant)
+- `AmlProvenanceResource` -- `GET /api/investigations/{caseId}/provenance` (W3C PROV-DM JSON export of investigation lineage)
 
 #### Audit Trail
 
@@ -162,7 +163,8 @@ Oversight case definition capabilities in `aml-oversight-investigation.yaml`:
 #### Operational
 
 - `AmlMetricsResource` -- `GET /api/metrics/throughput` (investigation throughput); `GET /api/metrics/trust-scores` (current trust scores); `GET /api/metrics/gates` (gate decision counts); `GET /api/metrics/trust-scores/history` (historical snapshots, query params: `agentId`, `capability`)
-- `AmlSimulationResource` -- `POST /api/simulation/seed` (seed all scenarios); `POST /api/simulation/seed/{scenario}` (seed specific scenario); `DELETE /api/simulation/seed` (reset); `POST /api/simulation/investigate` (start live investigation from scenario)
+- `AmlSimulationResource` -- `POST /api/simulation/seed` (seed all scenarios); `POST /api/simulation/seed/{scenario}` (seed specific scenario); `DELETE /api/simulation/seed` (reset); `POST /api/simulation/investigate` (start live investigation from scenario); `POST /api/simulation/seed/cbr` (seed CBR case base with synthetic cases); `DELETE /api/simulation/seed/cbr` (clear CBR case base)
+- `AmlCbrResource` -- `GET /api/cbr/bootstrap-report` (case base coverage by dimension + advisory metrics; not simulation-gated)
 
 ### Key Services
 
@@ -194,9 +196,11 @@ Oversight case definition capabilities in `aml-oversight-investigation.yaml`:
 
 - `AmlCaseProfileStoreObserver implements CaseOutcomeObserver` -- domain-specific retain; extracts `CaseProfile` features and writes compliance ledger entries on case completion
 - `CaseProfileExtractor` -- extracts `CaseProfile` from transaction and prior context
-- `CbrPathAdvisorWorker` -- analyses similar past cases and produces `CbrPathAdvice`
-- `InvestigationTriageWorker` -- rule-based SAR/FP/INCONCLUSIVE classification with CBR adjustment
+- `CbrPathAdvisorWorker` -- analyses similar past cases and produces `CbrPathAdvice` with `active` field (activation threshold gating)
+- `InvestigationTriageWorker` -- rule-based SAR/FP/INCONCLUSIVE classification with CBR adjustment (only when `CbrPathAdvice.active == true`)
 - `SarNarrativeSeeder` -- extracts sanitised narratives from similar past cases for narrative seeding; uses `ContentSanitiser` for PII protection
+- `CbrSyntheticSeeder` -- generates `PlanCbrCase` entries directly to `CbrCaseMemoryStore` for dev/demo bootstrapping; deterministic coverage across flag reasons, entity types, and outcomes
+- `AmlCbrPolicyKeys` -- `PreferenceProvider` key for CBR activation threshold (default: 30 similar cases)
 - `AmlCbrSchema`, `AmlCbrSchemaRegistrar` -- CBR schema definition and registration
 
 #### Compliance and GDPR

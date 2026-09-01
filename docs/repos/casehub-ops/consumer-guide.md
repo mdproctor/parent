@@ -35,7 +35,7 @@ The `api` module is a pure-Java library with no runtime dependencies. It defines
 
 ### Deployment Node Specs
 
-`DeploymentNodeSpec` -- sealed interface extending `NodeSpec`. Five permits:
+`DeploymentNodeSpec` -- sealed interface extending `NodeSpec`. Six permits:
 
 | Class | Node type | Key fields |
 |-------|-----------|------------|
@@ -44,6 +44,7 @@ The `api` module is a pure-Java library with no runtime dependencies. It defines
 | `CaseTypeNodeSpec` | `case_type` | `namespace`, `name`, `version`, `title`, `summary`, `definitionFile`, `definitionPayload` |
 | `TrustPolicyNodeSpec` | `trust_policy` | trust routing policy configuration |
 | `EndpointNodeSpec` | `endpoint` | REST/service endpoint configuration |
+| `DetectionNodeSpec` | `detection` | `situationId`, `eventTypes`, `correlationWindow`, `chainMode`, `triggerAction`. `toRegistration()` converts to `SituationRegistration` for RAS |
 
 All implement `nodeId()` and `nodeType()`.
 
@@ -400,6 +401,29 @@ Two child case descriptors for automated operational responses:
 - `ScalingSignalBridge` -- bridges scaling events to the case model
 - `NodeConvergenceTracker` -- tracks per-node convergence for case completion
 - `ClusterService.delete()` -- rejects with 409 when active loops reference the cluster
+
+### RAS Health Monitoring
+
+37 ganglia and 15 situations wired for operational health detection via CDI observer. `SituationChangeEvent` bridges RAS detections to the ops case lifecycle.
+
+### Case Descriptors
+
+- `ServiceUpgradeCaseDescriptor` — four-phase service upgrade lifecycle (plan, pre-check, execute, verify)
+- `CveResponseCaseDescriptor` — four-phase CVE remediation lifecycle
+- `ComplianceRemediationCaseDescriptor` — child case for compliance-driven remediation
+
+### CVE Persistence
+
+`CveStore` interface + `JpaCveStore` implementation (Flyway V6). `CveStatusObserver` tracks CVE status transitions.
+
+### Application Event Broadcasting
+
+`ApplicationEventBroadcaster` — SSE with ring buffer and gap detection for UI clients.
+
+### Service Lifecycle Extensions
+
+- `updateServiceImage(serviceId, imageRef)` — update container image
+- `rollbackToDeployment(serviceId, deploymentId)` — rollback to specific deployment
 
 ---
 

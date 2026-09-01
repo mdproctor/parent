@@ -123,6 +123,14 @@ Prereq: `brew install bats-core`
 
 `scripts/api-catalogue/generate_overlay.py` — reads aggregated API docs from `docs/repos/*/api/`, greps source for cross-repo SPI implementations, generates `docs/api/cross-repo-implementations.md`. Tests: `scripts/tests/test_generate_overlay.py`
 
+`scripts/doc_freshness_core.py` — structural anchor parser and staleness detection. Parses YAML frontmatter anchors from documentation, matches git diff against anchors. Vendored from soredium/doc-freshness. Tests: `scripts/tests/test_doc_freshness_ci.py`
+
+`scripts/doc-freshness-check-ci.py` — CI wrapper for doc freshness detection. Called by the `doc-freshness.yml` reusable workflow.
+
+`scripts/check-anchor-integrity.py` — verifies structural anchors (class/SPI names) resolve in the codebase. Called by CI on every PR.
+
+`scripts/generate-dependency-graph.py` — POM analysis across all child repos, generates `dependency-graph.json`. Called by daily `dependency-graph.yml` Action.
+
 ## Testing
 
 Surefire is configured in this parent POM with `rerunFailingTestsCount=2` — failing tests are retried twice before being marked as failures, surfacing flaky vs consistently broken.

@@ -117,7 +117,7 @@ Quarkus 3.34.3 app. All runtime components.
 | Class | Role |
 |-------|------|
 | `ReviewerChannelBackend` + `Factory` | Channel backend for review sessions — processes incoming messages through reviewer agent |
-| `DebateChannelBackend` + `Factory` | Channel backend for debate sessions |
+| `DebateChannelBackend` + `Factory` | Channel backend for debate sessions — pushes WebSocket events, dispatches SUB_TASK_REQUEST via CDI, triggers `orchestrator.converse()` on first message for autonomous sessions, terminates orchestrator on FLAG_HUMAN |
 | `ChannelAgentDispatcher` | Extends `blocks.channel.ChannelAgentDispatcher` — routes `SUB_TASK_REQUEST` to handlers, posts findings back |
 | `DebateParticipants` | `ensureSender()` — idempotent per-role Qhorus instance registration |
 
@@ -152,6 +152,18 @@ Handlers invoke `DebateAgentProvider.analyse(AgentTask)` and post the result as 
 |-------|------|
 | `PlatformDebateAgentProvider` | `@DefaultBean` — implements `DebateAgentProvider` via platform `AgentProvider` SPI. Blocking streaming invocation. |
 | `ClaudeAgentSdkDebateAgentProvider` (claude-agent module) | Optional — displaces `PlatformDebateAgentProvider` when the claude-agent module is on the classpath. Pending `casehubio/platform#55`. |
+
+#### Autonomous Orchestration
+
+Implements blocks' `ConversationOrchestrator` SPIs for server-driven autonomous debates (when `start_debate(autonomous=true)`):
+
+| Class | Implements | Role |
+|-------|-----------|------|
+| `DebateAgentInvoker` | `AgentInvoker<String>` | Wraps `DebateAgentProvider` — looks up per-agent system prompts, delegates to `analyse(AgentTask)` |
+| `DebatePromptAssembler` | `PromptAssembler` | Assembles document content, selection scope, and conversation history (system prompt excluded — handled by invoker) |
+| `DebateResponseBuilder` | `ResponseMessageBuilder` | Encodes LLM responses as `DHMETA:`-prefixed debate entries with inferred entry type and round |
+
+**Triggering:** `DebateChannelBackend.post()` triggers `orchestrator.converse()` on a virtual thread when the first message arrives on an autonomous session. An `AtomicBoolean` CAS guard (`DebateSession.markConverseStarted()`) ensures exactly-once triggering. Termination uses `CompositeTermination` of `AllAgreedTermination`, `ContestedEscalation(3)`, and `MaxIterationsTermination(20)`. External interruption (FLAG_HUMAN, `endDebate`) calls `orchestrator.terminate()`.
 
 #### Debate Projection and Protocol
 

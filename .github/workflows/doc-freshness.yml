@@ -1,0 +1,41 @@
+name: Doc Freshness Check
+
+on:
+  workflow_call:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout parent for detection scripts
+        uses: actions/checkout@v4
+        with:
+          repository: casehubio/parent
+          path: .parent
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Generate diff file list
+        run: git diff --name-only origin/${{ github.base_ref }}...HEAD > /tmp/diff-files.txt
+
+      - name: Run doc freshness check
+        run: |
+          python3 .parent/scripts/doc-freshness-check-ci.py \
+            --diff /tmp/diff-files.txt \
+            --docs docs/ \
+            --repo ${{ github.event.repository.name }}
+
+      - name: Check anchor integrity
+        run: |
+          python3 .parent/scripts/check-anchor-integrity.py \
+            --docs docs/ \
+            --repo ${{ github.event.repository.name }} \
+            --source-root .

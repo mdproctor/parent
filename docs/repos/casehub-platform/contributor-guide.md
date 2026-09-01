@@ -25,7 +25,7 @@ testing/                    <- companion: @Alternative @Priority(200) test fixtu
 | Module | Artifact | CDI | Purpose |
 |--------|----------|-----|---------|
 | `platform-api/` | `casehub-platform-api` | (none) | Pure Java SPIs -- zero deps |
-| `agent-api/` | `casehub-platform-agent-api` | (none) | `AgentProvider` SPI, `AgentEvent` sealed interface, `AgentMcpServer` -- Mutiny only, no Quarkus |
+| `agent-api/` | `casehub-platform-agent-api` | (none) | `AgentProvider` + `AgentBackend` SPIs, `AgentRuntime` + `AgentProcess`, `AgentEvent` sealed interface, `AgentMcpServer` -- Mutiny only, no Quarkus |
 | `platform/` | `casehub-platform` | `@DefaultBean` | Quarkus mocks + no-ops; `DataSourceRouter`; `CloudEventTypeDispatcher` |
 | `testing/` | `casehub-platform-testing` | `@Alternative @Priority(200)` | `FixedCurrentPrincipal`, `InMemoryGroupMembershipProvider` |
 | `config/` | `casehub-platform-config` | `@ApplicationScoped` | Scope-aware YAML + SmallRye Config |
@@ -43,8 +43,15 @@ testing/                    <- companion: @Alternative @Priority(200) test fixtu
 | `governance/` | `casehub-platform-governance` | `@ApplicationScoped` | `DefaultPolicyEnforcer` -- retry/timeout/backoff on virtual thread executor |
 | `credentials-quarkus/` | `casehub-platform-credentials-quarkus` | `@Alternative @Priority(1)` | Bridge `CredentialResolver` to Quarkus `CredentialsProvider` |
 | `scim/` | `casehub-platform-scim` | `@ApplicationScoped` | SCIM 2.0 `GroupMembershipProvider` |
-| `agent-claude/` | `casehub-platform-agent-claude` | `@Alternative @Priority(10)` | Claude CLI subprocess via Spring AI Community `claude-code-sdk` 1.0.0 -- semaphore-gated, wall-clock timeout |
-| `agent-langchain4j/` | `casehub-platform-agent-langchain4j` | `@Alternative @Priority(1)` | Bidirectional LangChain4j interop -- any ChatModel as AgentProvider, any AgentProvider as ChatModel |
+| `agent-runtime/` | `casehub-platform-agent-runtime` | `@ApplicationScoped` | `SubprocessRuntime` -- local process execution for CLI agent providers |
+| `agent-claude/` | `casehub-platform-agent-claude` | `@ApplicationScoped` | AgentBackend "claude" -- Claude CLI subprocess via `claude-code-sdk` |
+| `agent-openai/` | `casehub-platform-agent-openai` | `@ApplicationScoped` | AgentBackend "openai" -- native OpenAI Java SDK (v4.50.0), `prompt_cache_key` support |
+| `agent-codex/` | `casehub-platform-agent-codex` | `@ApplicationScoped` | AgentBackend "codex" -- Codex CLI via `AgentRuntime` |
+| `agent-gemini/` | `casehub-platform-agent-gemini` | `@ApplicationScoped` | AgentBackend "gemini" -- native Google GenAI SDK (v1.65.0), explicit caching |
+| `agent-gemini-cli/` | `casehub-platform-agent-gemini-cli` | `@ApplicationScoped` | AgentBackend "gemini-cli" -- Gemini CLI via `AgentRuntime` |
+| `agent-langchain4j/` | `casehub-platform-agent-langchain4j` | `@ApplicationScoped` | AgentBackend "langchain4j" -- catch-all fallback; bidirectional LangChain4j interop |
+| `agent-router/` | `casehub-platform-agent-router` | `@ApplicationScoped` | `RoutingAgentProvider` -- dispatches to AgentBackend by key via CDI `Instance` |
+| `agent-gate/` | `casehub-platform-agent-gate` | `@Decorator @Priority(APPLICATION)` | Token bucket + concurrency gate rate limiter -- wraps RoutingAgentProvider |
 | `endpoints-memory/` | `casehub-platform-endpoints-memory` | `@Alternative @Priority(100)` | In-memory `EndpointRegistry` -- volatile, Tier 4 CDI |
 | `endpoints-config/` | `casehub-platform-endpoints-config` | `@Startup @ApplicationScoped` | YAML endpoint populator -- `${VAR}` interpolation, multi-file |
 | `notifications/` | `casehub-platform-notifications` | `@ApplicationScoped` | REST + SSE -- list, mark-read, dismiss, unread-count, preferences, suppression |
@@ -70,6 +77,8 @@ testing/                    <- companion: @Alternative @Priority(200) test fixtu
 | `platform-view/` | `casehub-platform-view` | `@ApplicationScoped` | `SubjectViewEvaluator` + `SubjectViewOrchestrator` -- label-path view evaluation with caching |
 | `platform-view-inmem/` | `casehub-platform-view-inmem` | `@Alternative @Priority(100)` | In-memory view store + membership tracker + `InMemorySubjectViewQuerySupport` abstract helper |
 | `platform-view-jpa/` | `casehub-platform-view-jpa` | `@ApplicationScoped` | JPA view store -- `JpaLabelPatternQuerySupport` for domain consumers, `LabelPatternPredicates` for SQL LIKE |
+| `yaml-core/` | `casehub-platform-yaml-core` | (none) | Pure Java YAML primitives -- `VariableResolver`, `ForEachExpander`, `Truthiness`, `CsvParser`. Zero deps |
+| `ts-core/` | `casehub-platform-ts-core` | (none) | TypeScript execution SPI -- `TsExecutor` interface, `NodeTsExecutor` (Node.js subprocess). Zero deps |
 
 **Removed from build:** `memory-inmem/`, `memory-jpa/`, `memory-sqlite/`, `memory-mem0/`, `memory-graphiti/` -- memory backends migrated to casehub-neocortex (neocortex#56). Directories remain on disk.
 
@@ -188,6 +197,7 @@ CDI tier for `AgentProvider`:
 - Tier 0: `NoOpAgentProvider @DefaultBean` (platform/) -- fallback
 - Tier 1: `ChatModelAgentProvider @Alternative @Priority(1)` (agent-langchain4j/) -- any LangChain4j ChatModel
 - Tier 10: `ClaudeAgentProvider @Alternative @Priority(10)` (agent-claude/) -- native Claude CLI
+- Decorator: `GatedAgentProvider @Decorator @Priority(APPLICATION)` (agent-gate/) -- token bucket + concurrency gate, wraps any provider
 
 `AgentEvent` sealed interface variants: `TextDelta`, `ThinkingDelta`, `ToolCallDelta`, `ToolCallComplete`, `ToolResult`, `InvocationComplete` (terminal with cost/usage/timing metadata).
 
@@ -202,7 +212,7 @@ CDI tier for `AgentProvider`:
 
 ### Access Control Architecture
 
-**InMemoryAccessControlProvider** (`@Alternative @Priority(10)`): Three `ConcurrentHashMap`s -- grants, denies, parents. `GrantKey = (actorId, resourceId, action, tenancyId)`.
+**InMemoryAccessControlProvider** (`@Alternative @Priority(10)`): Three `ConcurrentHashMap`s -- grants, denies, parents. `GrantKey = (actorId, ResourceId, action, tenancyId)`. All SPI methods use `ResourceId` (structured `type:id` value type) instead of raw strings.
 
 **JpaAccessControlProvider** (`@ApplicationScoped`): Hibernate ORM Panache entities. All mutations are `@Transactional` with audit logging to `AclAuditLogEntity`. Upsert semantics on grants/denies.
 
@@ -238,6 +248,7 @@ Both implementations share the same resolution algorithm:
 - `PreferenceSchemaDescriptor` -- carries type, constraints, enum options. Builder infers type from `PreferenceKey.defaultValue()` class.
 - `PreferenceValidator` -- validates values against schema constraints at write time. Returns `List<String>` violations. Supports integer, number, boolean, duration, string (with minLength/maxLength/pattern), and enum validation.
 - Schema versioning via `version()` monotonic counter -- `PreferenceSchemaResource` returns ETag based on version, supports 304 Not Modified via `request.evaluatePreconditions()`.
+- `PlatformPreferenceRegistrar` (`@ApplicationScoped` in platform/) -- canonical `@Observes StartupEvent` registrar. Registers 6 retention `PreferenceSchemaDescriptor` entries from `PlatformPreferenceKeys`. Domain modules follow the same pattern with their own keys class + registrar bean.
 
 ### Subject View Architecture
 

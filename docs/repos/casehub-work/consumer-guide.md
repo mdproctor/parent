@@ -9,9 +9,9 @@
 
 ## What This Module Does
 
-Provides a human task inbox (`WorkItem`) with an 11-status lifecycle, SLA breach policies, delegation with accept/decline, M-of-N parallel group completion, conflict-of-interest exclusion, conditional named outcomes, and hierarchical progress tracking. Usable standalone or integrated with CaseHub engine, Quarkus-Flow, and Qhorus.
+Provides a human task inbox (`WorkItemEntity`) with an 11-status lifecycle, SLA breach policies, delegation with accept/decline, M-of-N parallel group completion, conflict-of-interest exclusion, conditional named outcomes, and hierarchical progress tracking. Usable standalone or integrated with CaseHub engine, Quarkus-Flow, and Qhorus.
 
-A `WorkItem` is deliberately NOT called `Task` — CNCF Serverless Workflow and CaseHub both have `Task` concepts with different semantics.
+A `WorkItemEntity` is deliberately NOT called `Task` — CNCF Serverless Workflow and CaseHub both have `Task` concepts with different semantics.
 
 ## Modules to Depend On
 
@@ -25,10 +25,11 @@ A `WorkItem` is deliberately NOT called `Task` — CNCF Serverless Workflow and 
 | `queues/` | `casehub-work-queues` | compile (opt-in) | Label-based queue views with LabelRule filter expressions, queue state tracking, trend snapshots (`QueueSnapshotJob`), and queue membership. |
 | `queues-dashboard/` | `casehub-work-queues-dashboard` | compile (opt-in) | SSE-driven queue dashboard with TUI rendering. |
 | `ai/` | `casehub-work-ai` | compile (opt-in) | Semantic worker selection (`SemanticWorkerSelectionStrategy`), embedding-based skill matching, escalation summaries, resolution suggestions, low-confidence queue filtering, worker skill profiles. |
-| `notifications/` | `casehub-work-notifications` | compile (opt-in) | Slack, Teams, and HTTP webhook lifecycle notifications with configurable rules. |
+| ~~`notifications/`~~ | ~~`casehub-work-notifications`~~ | — | **Removed** (#315) — replaced by platform subscription engine. Add `casehub-platform` subscriptions module for notification matching. |
 | `reports/` | `casehub-work-reports` | compile (opt-in) | SLA compliance reporting — breach reports, throughput buckets, actor reports, queue health. |
 | `issue-tracker/` | `casehub-work-issue-tracker` | compile (opt-in) | GitHub and Jira issue linking — webhook-based bidirectional sync, `IssueTrackerProvider` SPI, `WorkItemIssueLink` entity, `NormativeResolution` vocabulary. |
 | `flow/` | `casehub-work-flow` | compile (opt-in) | Quarkus-Flow bridge — `WorkItemsFlow` base class with `workItem()` DSL for workflow definitions, `HumanTaskFlowBridge` for programmatic human-in-the-loop suspension. |
+| `annotations/` | `casehub-work-annotations` | compile (opt-in) | Annotation-driven human-in-the-loop — `@HumanApproval`, `@RequiresQuorum`, `@Escalate`, `@SkillMatch`. Quarkus build extension scans and validates; CDI interceptor for standalone use. |
 | `engine-adapter/` | `casehub-work-engine-adapter` | compile (opt-in) | Two-way bridge to CaseHub engine PlanItem transitions — `HumanTaskScheduleHandler`, `WorkItemLifecycleAdapter`, action gate handlers, recovery service. |
 | `progress-api/` | `casehub-work-progress-api` | compile (opt-in) | Progress model API — `ProgressInstance`, `StepDefinition`, `RollupStrategy` SPI, `ProgressUpdatedEvent`, event/instance stores. Pure Java. |
 | `progress-core/` | `casehub-work-progress-core` | compile (opt-in) | Rollup strategies (AveragePercentage, CountCompleted, WeightedPercentage), shape validators, rollback detection. |
@@ -121,7 +122,7 @@ Builder-pattern request object for creating WorkItems. All fields are optional e
 | `CapabilityRegistry` | Capability vocabulary validation (STRICT/WARN/PERMISSIVE). | no | permissive |
 | `SkillMatcher` | Worker skill scoring against WorkItem requirements. | no | — |
 | `SkillProfileProvider` | Builds worker `SkillProfile` for AI-based selection. | no | — |
-| `NotificationChannel` | Outbound notification delivery (Slack, Teams, webhook). | no | — |
+| ~~`NotificationChannel`~~ | **Removed** (#315) — use platform subscription engine for notification delivery. | — | — |
 | `SpawnPort` | Child WorkItem creation with `spawn(SpawnRequest)` and `cancelGroup(UUID, boolean)`. | no | — |
 
 ### Progress Model SPIs
@@ -149,7 +150,7 @@ In `io.casehub.work.issuetracker.spi`:
 
 `CREATED`, `ASSIGNED`, `STARTED`, `COMPLETED`, `REJECTED`, `FAULTED`, `DELEGATED`, `DELEGATION_ACCEPTED`, `DELEGATION_DECLINED`, `RELEASED`, `SUSPENDED`, `RESUMED`, `CANCELLED`, `OBSOLETE`, `EXPIRED`, `CLAIM_EXPIRED`, `SPAWNED`, `ESCALATED`, `DEADLINE_EXTENDED`, `SLA_REASSIGNED`, `SLA_EXTENDED`, `SIGNAL_RECEIVED`, `MANUALLY_ESCALATED`, `PROGRESS_UPDATE`, `LABEL_ADDED`, `LABEL_REMOVED`.
 
-CDI events fire on every status transition via `WorkItemLifecycleEmitter`. Downstream adapters (engine, ledger, notifications) observe these events.
+CDI events fire on every status transition via `WorkItemLifecycleEmitter`. Downstream adapters (engine, ledger) observe these events. `WorkItemSubscriptionBridge` inserts events into the platform subscription engine DataSource when present.
 
 ## CloudEvent Types
 
@@ -260,7 +261,7 @@ public class DocumentApprovalWorkflow extends WorkItemsFlow {
 }
 ```
 
-`WorkItemsFlow` extends Quarkus-Flow's `Flow` base class. `workItem()` creates a `WorkItemTaskBuilder`. `fn()` wraps automated function steps at the same visual level. `HumanTaskFlowBridge` provides lower-level programmatic access via `requestApproval()` and `requestGroupApproval()` — both return `Uni<String>` that suspends the workflow until a human resolves the WorkItem.
+`WorkItemsFlow` extends Quarkus-Flow's `Flow` base class. `workItem()` creates a `WorkItemTaskBuilder`. `fn()` wraps automated function steps at the same visual level. `HumanTaskFlowBridge` provides lower-level programmatic access via `requestApproval()`, `requestGroupApproval()`, and `requestApproval(WorkItemCreateRequest)` — all return `Uni<String>` that suspends the workflow until a human resolves the WorkItem. The `WorkItemCreateRequest` overload accepts a pre-built request directly, enabling annotation-generated interceptors to delegate without duplicating bridge logic.
 
 ## REST API
 
@@ -268,7 +269,7 @@ JAX-RS resources in the `rest/` module:
 
 | Resource | Key Endpoints |
 |----------|---------------|
-| `WorkItemResource` | `POST /workitems` (create), `GET /workitems` (scan by assignee, candidateUser, candidateGroups, type), lifecycle transitions: `PUT /workitems/{id}/start`, `/complete`, `/cancel`, `/reject`, `/delegate`, `/escalate`, `/suspend`, `/resume`, `/fault`, `/obsolete`, `/extend` |
+| `WorkItemResource` | `POST /workitems` (create), `GET /workitems` (scan by assignee, candidateUser, candidateGroups, type), lifecycle transitions: `PUT /workitems/{id}/start`, `/complete`, `/cancel`, `/reject`, `/delegate`, `/escalate`, `/suspend`, `/resume`, `/fault`, `/obsolete`, `/extend`, `/deadline` |
 | `WorkItemTemplateResource` | `PATCH /workitem-templates/{id}` (RFC 7396 merge-patch) |
 | `WorkItemBulkResource` | Batch lifecycle operations |
 | `WorkItemInstancesResource` | Multi-instance group management |
@@ -345,6 +346,8 @@ All properties prefixed with `casehub.work`:
 |-----|-----------|---------|
 | `sla.default-hours` | `casehub.work` | 24 |
 | `sla.default-claim-hours` | `casehub.work` | 4 |
+| `snapshot-interval` | `casehub.work.queues` | PT1H |
+| `trend-retention` | `casehub.work.queues` | PT168H |
 
 ## Boundary Rules
 
@@ -365,7 +368,8 @@ All migrations in `db/work/migration`:
 | V1000-V1004 | shared ledger base schema |
 | V2000-V2004 | queues (schema, membership, tenancy, snapshots) |
 | V2001 | ledger (work-item ledger entries) |
-| V3000-V3002 | notifications (rules, tenancy, types rename) |
+| V3000-V3002 | notifications (rules, tenancy, types rename) — **historical, module removed** |
+| V3003 | drop notification_rules table (#315) |
 | V4001-V4002 | ai (escalation summaries, tenancy) |
 | V5003-V5004 | queues subject view migration + label rule schema |
 | V6000-V6002 | issue-tracker (issue links, priority rename, tenancy) |

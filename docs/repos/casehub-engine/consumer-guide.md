@@ -57,10 +57,11 @@ Cases are defined declaratively: namespace, name, version, capabilities, workers
 - `capability` — routes to a worker by capability match
 - `subCase` — spawns a child case (with `SubCaseCompletionStrategy` and `SubCaseMapping`)
 - `humanTask` — creates a WorkItem in casehub-work (inline or template mode). Supports `scope`, `inputMapping`/`outputMapping` (JQ), `candidateGroups`, `candidateUsers`, `expiresIn`, `outcomes`
+- `signal` — engine-internal context mutation. Writes a static payload to the case context and publishes `CONTEXT_CHANGED`. No worker dispatch. Use for case-level SLA deadlines, escalation flags, phase transitions. `LifecycleScope.BINDING` only
 
 **Binding fields:** `inputSchemaOverride` overrides the capability's default input schema for this binding only. `contextWrite` is a JQ expression whose result is merged into case context after the worker completes. `outcomePolicy` controls REROUTE vs FAULT behavior on worker DECLINED/FAILED/EXPIRED outcomes. `lifecycleScope` governs worker lifetime.
 
-**Trigger types:** `contextChange` (with optional `filter` and binding-level `when` guard), `schedule`/`timer`, `scopeActivated` (fires when a compound scope becomes ACTIVE).
+**Trigger types:** `contextChange` (with optional `filter` and binding-level `when` guard), `schedule` (YAML: `every:` for one-shot ISO-8601 duration, `cron:` for periodic Quartz expression), `scopeActivated` (fires when a compound scope becomes ACTIVE).
 
 ### CaseCompletion
 
@@ -130,6 +131,45 @@ All worker functions return `WorkerResult`:
     Map.of("output", "value"),
     PlannedAction.of("File SAR report", "sar.file", Map.of("accountId", "ACC-123"))))
 ```
+
+### Worker Rights and Scoped Credentials
+
+Privileged external workers (with their own service-account identity) receive case-scoped credentials and auto-managed ACL grants at dispatch time.
+
+**Declaration** — on the CaseDefinition YAML:
+
+```yaml
+workers:
+  - name: risk-agent
+    serviceAccountId: "agent:pool-risk@acme.io"
+    capabilities: [assess-risk]
+
+bindings:
+  - name: assess
+    capability: assess-risk
+    worker: risk-agent
+    permissionIntent:
+      - read-context
+      - signal-case
+      - read-event-log
+```
+
+`permissionIntent` (List of `WorkerAction`) declares what the worker needs. Default when omitted: `[read-context]` (fail-closed for writes). `serviceAccountId` is optional — when absent, the engine mints an ephemeral identity (`agent:worker-<caseId>-<shortUuid>`).
+
+**Available actions:** `read-context`, `write-context`, `signal-case`, `read-event-log`, `read-plan-items`, `spawn-sub-case`, `admin`. All map to `AclResourceType.CASE` — per-resource-type enforcement deferred.
+
+**What happens at dispatch:**
+1. `WorkerIdentityResolver` resolves or mints the actorId
+2. `WorkerGrantOrchestrator.grantAndMint()` creates ACL grants via `AccessControlProvider.grantBatch()` and stores a scoped `WorkerCredential` token
+3. Token is delivered to the worker via `ProvisionContext.workerCredentialToken` or COMMAND payload
+
+**What happens at completion:**
+- `revokeForWorker()` — revokes the credential and removes ACL grants. For shared service accounts with concurrent bindings, differential revocation ensures only unneeded grants are removed
+- Case terminal state triggers `revokeForCase()` — sweeps all surviving credentials
+
+**REST enforcement:** Workers present the token via `X-Worker-Credential` header. `WorkerCredentialFilter` validates the token and enforces structural case isolation (403 if the request targets a different case than the credential is scoped to).
+
+**Persistent credential store:** `InMemoryWorkerCredentialStore` (`@DefaultBean`) works out of the box for single-node deployments. Clustered deployments should provide a persistent `WorkerCredentialStore` implementation.
 
 ### Worker Outcome Handling
 
@@ -341,6 +381,12 @@ Opt-in JAX-RS module — add to classpath to expose REST endpoints. All endpoint
 | `GET` | `/api/v1/case-definitions` | List all registered case definitions (paginated) |
 | `GET` | `/api/v1/case-definitions/{ns}/{name}` | Get definitions by namespace and name |
 | `GET` | `/api/v1/case-definitions/{ns}/{name}/{version}` | Get definition by exact key |
+| `GET` | `/api/v1/cases/{caseId}/plan/model` | Live case plan model snapshot |
+| `GET` | `/api/v1/cases/{caseId}/plan/definitions` | Plan item definition hierarchy |
+| `GET` | `/api/v1/cases/{caseId}/plan/decomposition` | Captured HTN decomposition tree |
+| `GET` | `/api/v1/cases/{caseId}/plan/dag` | Captured DAG plan snapshot |
+| `GET` | `/api/v1/cases/{caseId}/plan/dag/result` | Captured DAG execution result |
+| `GET` | `/api/v1/cases/{caseId}/plan/state` | Composed execution state for orchestration workbench |
 | `GET` | `/actors/{actorId}/state` | Unified actor workload view (from actor-state module) |
 
 ### Error Handling
@@ -364,6 +410,31 @@ Cases are configured via `CaseDefinition.yaml`. Key configuration blocks:
 - `cognitiveDemand:` — per-capability cognitive function demand profile
 - `episodicMemory:` — domain, entityId (JQ), and recent count for episodic memory injection
 
+#### Case-Level SLA Example
+
+A timer-triggered signal binding that writes an SLA expiry flag to case context, enabling a failure goal:
+
+```yaml
+spec:
+  goals:
+    - name: review-timed-out
+      when: ".caseSla.expired == true"
+  completion:
+    failure:
+      anyOf: [review-timed-out]
+  bindings:
+    - name: case-timeout
+      on:
+        schedule:
+          every: PT48H
+      when: ".caseSla.expired == null"
+      signal:
+        caseSla:
+          expired: true
+```
+
+The `when` guard prevents re-firing after the first write. The `signal:` payload is static — written as-is to the case context. The `schedule:` trigger supports `every:` (ISO-8601 duration, one-shot) and `cron:` (Quartz expression, periodic).
+
 ### JQ Expression Evaluation
 
 All JQ expressions evaluate against the **working layer** (`context.layer(ContextLayer.WORKING).asJsonNode()`), NOT the full layer document. YAML definitions use unqualified field paths (`.transaction`, `.entityResolution`).
@@ -374,7 +445,52 @@ All JQ expressions evaluate against the **working layer** (`context.layer(Contex
 
 ### Expression Engine
 
-Engine expression evaluation is unified with the platform `ExpressionEngine` and `ExpressionEvaluator` hierarchy. `ExpressionEngineRegistry` resolves evaluators. Supported: JQ expressions (`JQExpressionEvaluator`) and lambda predicates (`LambdaExpressionEvaluator`).
+Engine expression evaluation is unified with the platform `ExpressionEngine` and `ExpressionEvaluator` hierarchy. `ExpressionEngineRegistry` resolves evaluators.
+
+**Supported languages:**
+
+| Language | Evaluator | Evaluation target | Default for |
+|---|---|---|---|
+| JQ | `JQExpressionEvaluator` | `JsonNode` (working layer) | All expression sites when no `contextType` declared |
+| MVEL | `TypedMvelExpressionEvaluator` | Typed POJO (`contextType` class) | Inferred when `contextType` is set |
+| Lambda | `LambdaExpressionEvaluator` | Java DSL only (not YAML) | Programmatic predicates |
+
+**`expressionLang` field** — declares the default expression language for ALL expressions in a case definition:
+
+```yaml
+spec:
+  expressionLang: mvel   # all when/filter/inputProjection/etc use MVEL
+```
+
+When omitted, JQ is the default. When `contextType` is set, MVEL is inferred automatically (no explicit `expressionLang` needed).
+
+**`contextType` declaration** — declares a typed Java context class. The engine auto-constructs a `JacksonPojoBridge` for the type and infers MVEL as the expression language:
+
+```yaml
+spec:
+  contextType: com.example.LoanApplication
+```
+
+JQ expressions evaluate against `JsonNode`. MVEL expressions evaluate against the typed POJO instance — property access uses natural Java syntax (e.g., `amount > 10000`) instead of JQ paths (`.amount > 10000`).
+
+**Per-expression language override** — any expression site supports inline language selection via the `{lang: expr}` map syntax. This overrides the definition-level `expressionLang` for a single expression:
+
+```yaml
+bindings:
+  - name: high-value
+    on:
+      contextChange:
+        when: { mvel: "amount > 10000" }
+    inputProjection: { jq: ".amount" }
+
+labelRules:
+  - name: urgent
+    when: { jq: '.priority == "URGENT"' }
+    actions:
+      - add: "priority/urgent"
+```
+
+Supported at: binding `when`, trigger `contextChange`/`filter`, `inputProjection`, `outputProjection`, `inputMapping`, `outputMapping`, goal/milestone conditions, `doneWhen`, label rule `when`.
 
 ### Resilience Configuration
 

@@ -26,6 +26,8 @@ The framework is domain-agnostic. It provides graph management, topological tran
 | `work-adapter/` | `casehub-desiredstate-work` | When approval-gated nodes need WorkItem-backed approval lifecycle via casehub-work. Classpath-activated. |
 | `ras-adapter/` | `casehub-desiredstate-ras` | When reconciliation faults and drift should feed into casehub-ras situation detection. Provides ganglia, situation definitions, and correlation key extraction. |
 | `persistence-jpa/` | `casehub-desiredstate-persistence-jpa` | When fault counts must survive restarts. JPA-backed `FaultCountStore` with Flyway migration. Tier 2 in CDI priority ladder -- yields to application-provided stores. |
+| `yaml/runtime/` | `casehub-desiredstate-yaml` | YAML-driven graph declarations. Declare desired-state graphs in `META-INF/desiredstate/*.yaml` files. Jackson-based deserializer with `NodeSpecRegistry` (maps YAML `type:` strings to `@NodeTypeId`-annotated `NodeSpec` classes), `VariableResolver` (Map → Preferences → Config fallthrough), and build-time validation (unknown types, dangling dependencies, cycles). Add `@NodeTypeId("type-name")` to each `NodeSpec` class that should be YAML-addressable. The build extension (deployment module, auto-activated) discovers YAML files and generates `GoalCompiler<Void>` CDI beans qualified by namespace + name. |
+| `annotations/runtime/` | `casehub-desiredstate-annotations` | Annotation-driven graph declarations. Two models: interface (`@DesiredState` + `@Node`) for centralized graphs, class-based (`@DeclareNode`) for cross-module composition. `@DependsOn` supports string IDs and type-safe `Class<? extends NodeSpec>[]` refs. Graph rewriting via `@GraphRule` (parameterized pattern matching with `@Match`, `@DirectDep`, `@Reaches`, `@NotExists` or imperative with full `DesiredStateGraph` access). Graph validation via `@GraphInvariant` (same pattern vocabulary, universal quantification — fires after rules converge). Standalone rule/invariant containers: `@GraphRule(graph = {"pipeline:*"})` classes with include/exclude matching (`!` prefix for exclusions). `@Tier(nodeType)` eliminates runtime `ReviewSpecFactory` probe. Also: `@FaultPolicyDef`, `@GoalMethod`. The build extension (deployment module, auto-activated) scans annotations and generates `GoalCompiler` + `ThresholdFaultPolicy` CDI beans. |
 
 ---
 
@@ -112,31 +114,34 @@ SPI: `onFault(String tenancyId, FaultEvent event, DesiredStateGraph current, Act
 
 **FaultType enum:** `NODE_DESTROYED`, `NODE_DEGRADED`, `PROVISION_FAILED`, `DEPROVISION_FAILED`, `HUMAN_NODE_TIMEOUT`, `DEPENDENCY_UNAVAILABLE`, `APPROVAL_REJECTED`.
 
-Static factory: `FaultPolicy.addReviewNode(NodeType, ReviewSpecFactory)` -- creates a policy that adds a review node with `HumanGating.ALL` on fault.
+Static factory: `FaultPolicy.addReviewNode(ReviewSpecFactory) → TypedFaultPolicy` -- creates a review node with dependency edge to the faulted node, `HumanGating.ALL`, and ID derived from `ReviewSpec.nodeType().value()`. Returns `TypedFaultPolicy` with eagerly-captured `outputNodeType()`. Runtime consistency assertion guards probe-vs-actual NodeType mismatch (e.g. `NodeType.of("ai-review")` produces `"ai-review-n1"`).
 
 `FaultPolicyEngine` discovers all `FaultPolicy` beans via CDI, runs all matching, merges mutations, and detects conflicts (`ConflictingMutationException`).
 
 ### ThresholdFaultPolicy
 
-Reusable `FaultPolicy` in the API module -- counts faults per node via pluggable `FaultCountStore` SPI, delegates to a configured `FaultPolicy` at threshold. Builder-configured:
+Reusable `FaultPolicy` in the API module -- counts faults per node via pluggable `FaultCountStore` SPI. Supports multi-tier escalation with graph-presence guards. Builder-configured:
 
 ```java
 ThresholdFaultPolicy.builder()
     .faultTypes(Set.of(FaultType.PROVISION_FAILED))
     .nodeTypes(Set.of(NodeType.of("compute")))    // optional filter
-    .ignoreTypes(Set.of(NodeType.of("review")))   // optional exclusion
-    .threshold(3)                                   // default: 3
-    .action(escalationPolicy)                       // policy to delegate to
+    .tier(4, addReviewNode(aiSpec))
+    .tier(7, addReviewNode(humanSpec))
     .faultCountStore(store)                         // optional; defaults to InMemoryFaultCountStore
     .namespace("provision-escalation")              // required when custom store provided
     .build();
 ```
 
-`resetCount(tenancyId, nodeId)` for external recovery-reset. Lazy eviction on fault for removed nodes.
+Tier nodeTypes are auto-merged into `ignoreTypes`. Evaluation is highest-tier-first, first-match-wins. Tier N+1 fires only if a dependent of the faulted node with tier N's `NodeType` exists in the graph (graph-presence guard via `dependentsOf()`). `resetCount(tenancyId, nodeId)` for external recovery-reset. Lazy eviction on fault for removed nodes.
 
 ### GraphMutation
 
 Sealed interface with five variants: `AddNode(DesiredNode)`, `RemoveNode(NodeId)`, `UpdateNode(NodeId, DesiredNode)`, `AddDependency(Dependency)`, `RemoveDependency(Dependency)`.
+
+### GraphMutations
+
+Static utility: `GraphMutations.addNodeDependingOn(DesiredNode, NodeId)` returns `[AddNode, AddDependency]` -- the common pattern for adding a node with a dependency edge to an existing node.
 
 ### HumanNodeHandler
 
@@ -293,6 +298,20 @@ The runtime emits CloudEvents during reconciliation:
 | `io.casehub.desiredstate.node.drifted` | `NodeDriftedData` | Per-node drift detection |
 | `io.casehub.desiredstate.node.recovered` | `NodeRecoveredData` | Per-node recovery (DRIFTED -> PRESENT) |
 | `io.casehub.cbr.outcome` | `CbrOutcomeData` | CBR proposal outcome feedback |
+
+---
+
+## Cardinality Constraints
+
+`@Match`, `@DirectDep`, and `@Reaches` annotations support `minCount`/`maxCount` cardinality fields. `PatternParameterDescriptor` carries cardinality metadata. `GraphInvariantEngine` validates both match-level and expansion-level cardinality at build time. YAML patterns support `minCount`/`maxCount` via `YamlPattern` converter + validation.
+
+## TypeScript SDK (ts-core)
+
+`TsGraphRecorder` enables graph definitions in TypeScript via `defineGraph()`, `defineLifecycle()`, and `node()` helpers. Produces a JSON envelope consumed by `GoalCompiler`. `TsDesiredStateProcessor` processes TypeScript graphs with cross-surface filter broadening. Cross-surface `@GraphRule` annotations apply rules across Java and TypeScript graph surfaces.
+
+## YAML Lifecycle Hooks
+
+`verify`, `notify`, and `wait` hooks are available in YAML lifecycle definitions for declarative lifecycle management — verify a condition, send a notification, or wait for a duration/event before proceeding.
 
 ---
 

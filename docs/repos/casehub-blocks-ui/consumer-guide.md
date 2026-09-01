@@ -21,9 +21,10 @@ Domain-aware but app-agnostic — components know about trust scores, case timel
 
 | Package | npm name | Purpose | Maturity |
 |---------|----------|---------|----------|
-| `packages/blocks-ui-core` | `@casehubio/blocks-ui-core` | Tokens, DataSourceMixin, TrendSourceMixin, renderSparkline, EventStreamController, event helpers, domain types, SharedTimerController, blocks-confirm-dialog, renderPropertyTree, pulseAnimation CSS, CommitmentStatePill | Beta |
-| `packages/graph-stencil-case` | `@casehubio/graph-stencil-case` | Case domain adapter and structural stencils (binding, worker, milestone, goal, subcase) for the graph editor. Implements `DomainAdapter` from `@casehubio/graph-core`. | Alpha |
-| `packages/graph-stencil-swf` | `@casehubio/graph-stencil-swf` | Serverless Workflow (SWF) domain adapter and stencils (call, switch) for the graph editor. Uses `@openworkflowspec/sdk`. Implements `DomainAdapter` from `@casehubio/graph-core`. | Alpha |
+| `packages/blocks-ui-core` | `@casehubio/blocks-ui-core` | Tokens (re-exported from pages-ui-tokens), domain types (trust, commitment, orchestration, conversation, work-item), event helpers (re-exported from pages-component), CommitmentStatePill, StatusBadge (generic status pills), status registry (`lookupStatus`/`registerStatus`), `stateCategoryStyles`. Generic utilities (DataSourceMixin, TrendSourceMixin, renderSparkline, EventStreamController, SharedTimerController, confirm dialog, renderPropertyTree, pulseAnimation, fetchSource, EMPTY_DATASET) have moved to `@casehubio/pages-*` packages — re-exported here for backward compatibility. | Beta |
+| `packages/graph-stencil-case` | `@casehubio/graph-stencil-case` | Case domain adapter, structural stencils (binding, worker with function type badge, milestone, goal, subcase), YAML editor (add/remove/edit/switchTarget/switchFunctionType/switchMcpTransport/switchModelProvider), worker-function module (type detection, config interfaces, form renderers), RuntimeAdapter (`toDecorations`), persistence SPI (`GitHubBackend`). | Beta |
+| `packages/diagram-core` | `@casehubio/diagram-core` | Shared diagram orchestration — DiagramBaseMixin (undo/redo, render pipeline, persistence, keyboard shortcuts, error/degraded/readonly modes, SVG/PNG export via `exportDiagram`), DiagramToolbar (includes Export SVG/PNG buttons), DiagramProperties, form utilities. | Beta |
+| `packages/graph-stencil-swf` | `@casehubio/graph-stencil-swf` | SWF domain adapter (`toSwfGraph` — dual YAML walk with SDK `buildFlatGraph`, type prefixing, degraded mode), 10 typed stencils + generic fallback, edge types (flow, switch-case), `applySwfPropertyEdit`, `swfTaskSchema`, `createSwfThumbnailRenderer`. Uses `@openworkflowspec/sdk`. | Beta |
 
 ### Components (`components/`)
 
@@ -41,7 +42,7 @@ Domain-aware but app-agnostic — components know about trust scores, case timel
 | `kpi-metric-row` | KPI metric cards — responsive grid with sparklines, trends, status colours, density property | Stable |
 | `approval-gate` | Approval gate — structured decision point with quorum, evidence slots, SLA integration | Beta |
 | `audit-trail-viewer` | Audit trail viewer — ledger entries with pages-table, Merkle verification banner, attestations, filters, GDPR erasure handling | Beta |
-| `blocks-timeline` | Pluggable timeline — vertical, horizontal, compact layouts with strategy-based content | Beta |
+| `blocks-timeline` | CaseHub timeline — extends PagesEventTimeline with tenancy header mapping and domain strategies | Beta |
 | `trust-score-panel` | Agent trust score visualisation — Bayesian Beta scores, trend lines, per-capability breakdown | Beta |
 | `channel-activity` | Qhorus channel activity — message feed, channel nav, member panel, speech-act badges | Beta |
 | `commitment-viz` | Commitment lifecycle visualization — state pills, transition badges, range bars | Beta |
@@ -56,8 +57,13 @@ Domain-aware but app-agnostic — components know about trust scores, case timel
 | `session-list` | Session list — filterable session table with status badges | Beta |
 | `session-detail` | Session detail panel — session metadata, activity log, state display | Beta |
 | `session-workbench` | Session workbench — split-pane layout with session list and detail panels | Beta |
+| `execution-monitor` | Execution monitor — SSE-driven live execution state with agent roster | Beta |
+| `orchestration-workbench` | Orchestration workbench — execution monitor + audit timeline in split-workbench | Beta |
 | `trust-workbench` | Composite trust visibility — score panel, routing history, feedback display | Beta |
 | `document-workbench` | Document review workbench — 9 panels for AI-assisted document review: debate feed, document diff, timeline, review tracker, brainstorm options/picker, context gauge, doc picker, workspace status | Beta |
+| `conversation-viewer` | Conversation protocol viewer — convergence indicator, common ground panel, point list, point detail, conversation workbench. Structured deliberation UI with property-based data delivery. | Beta |
+| `casehub-diagram` | Visual diagram editor for CaseDefinition YAML — extends DiagramBaseMixin, case-specific palette, property panel with binding target selector + worker function type editor (agent/a2a/mcp/sequence/flow sub-forms, pop-out prompt dialog), structural editing, runtime overlay with status badges, worker inline expand | Beta |
+| `swf-diagram` | Standalone SWF workflow diagram — extends DiagramBaseMixin, schema-driven property editing, degraded mode banner. Read-only + property editing (no structural editing). | Beta |
 | `work-item-row` | Single work item row (legacy — inbox now uses pages-table) | Deprecated |
 
 **Maturity levels:**
@@ -85,11 +91,30 @@ Grouped tabular data with configurable visual modes — three presets (sectioned
 
 ### channel-activity
 
-Qhorus channel activity — eight sub-elements covering the full messaging lifecycle: feed (message grouping, threading, auto-scroll), individual messages, reactions, input with speech-act type selector, emoji picker, threaded replies, channel navigation (sidebar/dropdown modes), member panel with presence. DOMPurify + marked for markdown rendering. Extension points: `formatSender`, `renderContent`, `renderContextHeader`, `renderError`, `allowedTypes`/`deniedTypes` filtering, `showCreate`/`showDelete` toggles, `messageCounts`.
+Qhorus channel activity — twelve sub-elements covering the full messaging lifecycle: feed (message grouping, threading, auto-scroll), individual messages, reactions, input with speech-act type selector, emoji picker, threaded replies, channel navigation (sidebar/dropdown modes), member panel with presence, topic bar, task/artifact/correlation panels. DOMPurify + marked for markdown rendering. Convenience wrapper: `<blocks-channel-activity>` composes nav + feed + input + topic-bar in split-workbench with a tabbed sidebar (members/tasks/artifacts/correlations). Accepts a `PushController` (transport-agnostic — SSE, WebSocket, or test stubs) and creates domain controllers internally. Three tiers: standalone, panel-hosted via `configure()`, inline data mode. Extension points: `formatSender`, `renderContent`, `renderContextHeader`, `renderError`, `allowedTypes`/`deniedTypes` filtering, `showCreate`/`showDelete` toggles.
 
 ### notification-inbox
 
 Notification UI — bell with unread badge, inbox with tabs/filters/SSE, subscription list CRUD, subscription editor (schema-driven form), channel preferences (per-channel delivery mode/digest/groupBy/quiet hours), mute list, snooze control, notification preferences container.
+
+### status-badge
+
+Generic status pill for any domain's state enum. Replaces ad-hoc `_statusColors` records. Uses the status registry (`lookupStatus`) for state-to-category mapping and `stateCategoryStyles()` for colours.
+
+```html
+<status-badge domain="case" state="RUNNING" showIcon></status-badge>
+<status-badge domain="workitem" state="ASSIGNED" size="md"></status-badge>
+<status-badge state="COMPLETED"></status-badge> <!-- cross-domain default -->
+```
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `state` | `string` | — | The state value to display |
+| `domain` | `string` | — | Optional domain for domain-specific rendering |
+| `size` | `'sm' \| 'md'` | `'sm'` | Pill size |
+| `showIcon` | `boolean` | `false` | Show state icon |
+
+Built-in domains: `case`, `task`, `workitem`, `work`, `milestone`, `outcome`, `group`, `sla`, `node`, `session`, `commitment`.
 
 ### audit-trail-viewer
 
@@ -97,7 +122,7 @@ Ledger entry viewer — pages-table rendering, Merkle verification banner, attes
 
 ### blocks-timeline
 
-Pluggable timeline — strategy-based content with three strategies: event chronology, state progression, commitment lifecycle. Three layouts (vertical, horizontal, compact), render callback resolution, temporal weighting. Strategy-declared pagination (load-more in vertical layout).
+CaseHub timeline — extends `PagesEventTimeline` from `@casehubio/pages-viz`. Adds only `configure()` override for WorkIdentity tenancy header mapping. All generic timeline capabilities (self-fetch, pagination, layouts, rendering) are in PagesEventTimeline. Domain strategies: event chronology, state progression, commitment lifecycle, orchestration events.
 
 ### trust-score-panel
 
@@ -133,14 +158,100 @@ Session workbench for claudony session management — composes session-list + se
 
 Commitment lifecycle visualization — transition badges (`commitment-transition-badge`), range bars (compact/detailed modes), `decorateCommitmentRanges` pure function for feed decoration metadata. Uses the 7-state commitment model (OPEN/ACKNOWLEDGED/FULFILLED/FAILED/DECLINED/DELEGATED/EXPIRED). Props-driven, decoupled from channel-activity.
 
-### Graph Stencils (Alpha)
+### conversation-viewer
 
-Two domain adapter packages for the visual diagram editor (issue #103):
+Conversation protocol viewer — structured deliberation UI rendering convergence state, epistemic common ground, and conversation points. The protocol lens over structured conversations that raw message feeds (channel-activity) and document-specific views (document-workbench) do not provide.
 
-- **graph-stencil-case** — `CaseAdapter` implements `DomainAdapter<string>` from `@casehubio/graph-core`. Provides `caseStencils`: binding, worker, milestone, goal, subcase stencil descriptors with grammar rules (containment, connection constraints) and JSON Schema property definitions. Parses case definition YAML to produce graph models.
-- **graph-stencil-swf** — `SwfAdapter` implements `DomainAdapter<string>`. Provides `swfStencils`: call and switch stencil descriptors. Uses `@openworkflowspec/sdk` for SWF YAML parsing.
+Five components:
+- `<blocks-convergence-indicator>` — horizontal status bar showing convergence state (colour) and confidence (fill level). Sizes: `sm` (inline) and `md` (full with label).
+- `<blocks-common-ground-panel>` — three-column layout partitioning facts by epistemic status (Established / Pending / Disputed). Responsive collapse below 500px.
+- `<blocks-point-list>` — scrollable list of conversation points grouped by round, with single-selection via pages-event topics.
+- `<blocks-point-detail>` — thread view for a single point showing entry cards, sub-task findings, obligation chains (via commitment-viz), and flags.
+- `<blocks-conversation-workbench>` — convenience split-workbench wrapper composing all panels. Left: convergence indicator + point list. Right: point detail (when selected) or common ground panel (when not). KeyboardShortcutMixin (Escape deselects), LiveRegionMixin for accessibility, stale selection guard, `configure()` for hostPanel integration.
 
-Both adapters are currently stubbed (toGraph returns empty models, applyEdit returns input unchanged). The stencil descriptors are fully defined with grammar rules.
+Data delivery is property-based (`conversationState: ConversationState`) — host app owns fetching. Extension points via render callbacks (`renderPoint`, `renderEntry`, `renderFact`) per PP-20260713-8ea1af.
+
+### casehub-diagram
+
+Visual diagram editor for CaseDefinition YAML. Renders case definitions as interactive node graphs with ELK auto-layout.
+
+**Properties:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `yaml` | `string` | Inline YAML source |
+| `src` | `string` | URL to fetch YAML from |
+| `backend` | `PersistenceBackend \| null` | Persistence SPI for load/save (e.g. `GitHubBackend`) |
+| `uri` | `string` | Resource URI for the backend |
+| `schema` | `Record<string, unknown>` | CaseDefinition JSON Schema for property panel |
+| `runtimeState` | `CaseRuntimeState \| null` | Live execution state — enables runtime overlay |
+
+**Runtime overlay:** Set `runtimeState` to project live execution state onto the graph as visual decorations (status badges, borders, tooltips). The component is transport-agnostic — the host application owns data delivery (REST polling, SSE, WebSocket) and passes the snapshot as a property.
+
+```typescript
+interface CaseRuntimeState {
+  readonly planItems: readonly PlanItemSnapshot[];
+  readonly milestones: readonly MilestoneSnapshot[];
+  readonly timestamp: string;  // ISO 8601
+}
+
+interface PlanItemSnapshot {
+  readonly id: string;
+  readonly bindingName: string;
+  readonly status: TaskStatus;
+  readonly createdAt: string;  // ISO 8601
+}
+
+interface MilestoneSnapshot {
+  readonly name: string;
+  readonly status: MilestoneLifecycleStatus;
+}
+```
+
+`TaskStatus`: PENDING, RUNNING, DELEGATED, SUSPENDED, COMPLETED, FAULTED, REJECTED, OBSOLETE, CANCELLED (9 states). `MilestoneLifecycleStatus`: PENDING, ACTIVE, COMPLETED (3 states).
+
+When `runtimeState` is set, a design/runtime mode toggle appears in the toolbar. In runtime mode, binding nodes show aggregated PlanItem status badges (active-worst-first priority) and milestone nodes show lifecycle badges. Setting `runtimeState` to `null` reverts to design-only mode.
+
+Staleness: if `timestamp` is older than 30 seconds, a stale indicator appears in the toolbar. The component does not poll — staleness is evaluated on each `runtimeState` update.
+
+**Custom overlay use:** For apps that need decorations outside the component (e.g. a secondary status panel), `toDecorations(state)` is exported from `@casehubio/graph-stencil-case`:
+
+```typescript
+import { toDecorations } from '@casehubio/graph-stencil-case';
+const decorations = toDecorations(runtimeState);
+// Map<string, NodeDecoration> keyed by node ID
+```
+
+**Editing:** All editing capabilities (property panel, palette, delete, save, undo/redo) remain active in runtime mode. The overlay is purely visual.
+
+### swf-diagram + graph-stencil-swf
+
+Standalone SWF workflow diagram component. `swf-diagram` extends `DiagramBaseMixin` from `diagram-core` and delegates to `graph-stencil-swf` for adapter, stencils, property editing, and schema.
+
+**Properties:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `yaml` | `string` | SWF YAML string to render |
+| `src` | `string` | URL to fetch SWF YAML from |
+| `backend` | `PersistenceBackend \| null` | Optional persistence backend |
+| `uri` | `string` | Resource URI for persistence |
+| `schema` | `Record<string, unknown>` | JSON Schema — defaults to `swfTaskSchema` (self-sufficient) |
+| `readonly` | `boolean` | When true, suppresses property panel and save |
+
+**Stencils:** 10 typed stencils (call with sub-type icon switching, set, switch, raise, try, try-catch, start, end, entry, exit) plus a generic fallback for unsupported SWF types. Edge types: `flow` (solid) and `switch-case` (dashed).
+
+**Worker thumbnail integration:** Worker nodes in `casehub-diagram` that have a `do:` block render a miniaturised SWF preview. The application registers the thumbnail renderer at init:
+
+```typescript
+import { registerThumbnailRenderer } from '@casehubio/graph-stencil-case';
+import { createSwfThumbnailRenderer } from '@casehubio/graph-stencil-swf';
+registerThumbnailRenderer('swf', createSwfThumbnailRenderer());
+```
+
+**Drill-down:** Worker nodes emit `diagram:worker-drill-down` pages-event with `workerId`, `workerName`, `doYaml`. The hosting app handles navigation to `swf-diagram`.
+
+**Worker function types:** Worker stencils display a coloured badge indicating the function type (agent, flow, a2a, mcp, seq, ext). The property panel shows a function type selector and type-specific configuration forms when a worker node is selected. Supported types: Agent (prompt, model provider config), A2A (endpoint, skill, auth), MCP (stdio/HTTP transport, auth), Sequence (ordered worker list with drag-reorder), Flow (drill-down to SWF diagram). Unknown function keys render as read-only JSON. The `casehub-diagram-properties` component accepts `selectedType` and `workerNames` properties to enable the function section.
 
 ---
 

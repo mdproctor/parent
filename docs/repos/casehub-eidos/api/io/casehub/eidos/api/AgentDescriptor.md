@@ -186,6 +186,8 @@
 
 ### `public java.lang.String tenancyId()`
 
+### `public io.casehub.eidos.api.AgentDescriptor.Builder toBuilder()`
+
 ### `public final java.lang.String toString()`
 
 ### `public java.lang.String version()`

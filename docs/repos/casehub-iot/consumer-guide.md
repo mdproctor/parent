@@ -23,7 +23,7 @@ Consumer-relevant modules -- what to depend on and why:
 
 | Module | Artifact | When to use |
 |--------|----------|-------------|
-| `api` | `casehub-iot-api` | Always. Core SPIs, device class hierarchy, `StateChangeEvent`, `DeviceCommand`, `CommandResult`, `IoTCloudEventAdapter`, `IoTCommandAuditEvent`, enums. |
+| `api` | `casehub-iot-api` | Always. Core SPIs, device class hierarchy, `StateChangeEvent`, `DeviceCommand`, `CommandResult`, `IoTCloudEventAdapter`, `IoTCommandAuditEvent`, `IoTSituationEvent` (subscription engine integration), enums. |
 | `bridge-server` | `casehub-iot-bridge-server` | Cloud apps consuming remote (bridged) devices. `BridgeDeviceProvider implements DeviceProvider` -- remote devices look local. |
 | `mcp` | `casehub-iot-mcp` | LLM agent device access. Add with `quarkus-mcp-server-http` for `iot_get_devices`, `iot_get_state`, `iot_send_command`, `iot_get_history` tools. |
 | `testing` | `casehub-iot-testing` | Test scope only. `MockDeviceProvider`, `MockDeviceRegistry`, fixture devices (Java + YAML), `StateChangeEventPublisher`. |
@@ -144,6 +144,8 @@ public record DeviceCommand(
 
 `ACTION_TURN_ON`, `ACTION_TURN_OFF`, `ACTION_SET_TEMPERATURE`, `ACTION_LOCK`, `ACTION_UNLOCK`, `ACTION_SET_POSITION`, `ACTION_SET_VOLUME`.
 
+`VALID_ACTIONS` -- immutable `Set<String>` of all action constants. Use for input validation at system boundaries.
+
 ### Static Factory Methods
 
 - `turnOn(targetDeviceId, parameters, dispatchedBy, correlationId)`
@@ -201,6 +203,73 @@ Implemented by `JpaDeviceStateHistoryProvider` in the webapp module. Not availab
 
 ---
 
+## AI Resolution Queue Endpoints
+
+`ResolutionQueueResource` in the webapp module exposes the AI resolution pipeline. Both endpoints require `iot-viewer` role and filter by tenancy.
+
+### GET /api/resolution/queue
+
+Lists queue entries across the `iot-ai-resolution` and `iot-operator-assisted` views, enriched with device context from the case working layer.
+
+Query parameters:
+- `view` (optional) -- `ai-resolution` or `operator-assisted` (default: both)
+- `status` (optional) -- `PENDING`, `CLAIMED`, or `REVOKED` (default: PENDING + CLAIMED, excluding REVOKED)
+
+Returns `List<QueueEntrySummary>` -- each entry carries `entryId`, `caseId`, `caseType`, `viewName`, `status`, `assignedTo`, timestamps, and device identity fields (`deviceId`, `deviceClass`, `roomType`, `situationId`).
+
+### GET /api/resolution/queue/{entryId}
+
+Full triage detail for a single queue entry. Enriches with CBR suggestions (loaded on demand via `IoTCbrRetrievalService`), escalation context (`AiEscalationContext`), and execution results from the case working layer.
+
+Returns `QueueEntryDetail` -- wraps `QueueEntrySummary` plus `workingContext`, `suggestions`, `escalationContext`, and `executionResults`.
+
+Response records are in `webapp-api` (`io.casehub.iot.webapp.resolution`).
+
+---
+
+## Metrics and Health (webapp)
+
+The webapp module exposes Micrometer metrics via Prometheus and MicroProfile Health readiness checks.
+
+### Prometheus Endpoint
+
+`GET /q/metrics` -- Prometheus-format metrics. All AI resolution metrics use the prefix `casehub.iot.ai.resolution`:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `poll.duration` | Timer | Synchronous poll dispatch and sweep duration |
+| `llm.call.duration` | Timer | Per-attempt LLM call latency (tags: `outcome`) |
+| `entry.duration` | Timer | Entry processing time from claim to outcome (tags: `outcome`) |
+| `action.execution.duration` | Timer | Sequential action execution time (tags: `outcome`) |
+| `entries.processed` | Counter | Entries by terminal outcome (tags: `outcome`, `cbr.band`) |
+| `claim.contention` | Counter | Claim race losses (normal concurrency) |
+| `llm.retries` | Counter | Transient LLM retry attempts |
+| `actions.executed` | Counter | Device command executions (tags: `succeeded`) |
+| `semaphore.available` | Gauge | Available LLM concurrency permits |
+| `queue.pending` | Gauge | PENDING entries at last poll |
+
+**Outcome tags:** `executed`, `llm-escalated`, `risk-gate`, `timeout`, `partial-failure`, `llm-error`, `case-not-found`, `status-guard-abort`, `error`.
+
+**CBR band tags:** `high` (>=0.85), `medium` (0.6-0.85), `low` (<0.6), `none` (queried, no matches), `unknown` (not queried).
+
+### Health Endpoint
+
+`GET /q/health/ready` -- includes `ai-resolution-agent` check. Reports UP when agent is enabled, both queue views are resolved, and the LLM agent is initialized. Data fields: `enabled`, `aiResolutionViewResolved`, `operatorAssistedViewResolved`, `semaphorePermits`.
+
+### Multi-Turn Conversation
+
+The AI resolution agent supports multi-turn LLM conversations for complex situations where single-shot resolution is insufficient. The agent opens an `AgentSession` (via platform `AgentProvider`) with read-only IoT MCP tools attached, allowing the LLM to query device state, read sensor history, and gather information across multiple turns before proposing a resolution plan.
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `casehub.iot.ai-resolution.conversation-mode` | `auto` | `single` (legacy single-shot), `multi` (always multi-turn), `auto` (session with single-turn exit for simple cases) |
+| `casehub.iot.ai-resolution.max-conversation-turns` | `5` | Max turns before auto-escalation |
+| `casehub.iot.ai-resolution.max-concurrent-sessions` | `1` | Concurrent multi-turn conversations (independent of LLM call semaphore) |
+
+In `auto` mode, every entry opens a session. Simple cases (LLM resolves on turn 1) close immediately. Complex cases continue up to `max-conversation-turns`. The conversation transcript is persisted to the case working context (`aiConversationTranscript`) on both resolution and escalation.
+
+---
+
 ## MCP Tools
 
 The `mcp` module (`casehub-iot-mcp`) provides four tools for LLM agent integration via `IoTDeviceMcpTool` (`@ApplicationScoped`):
@@ -240,7 +309,29 @@ Gets state change history for a device. Parameters:
 
 Requires a `DeviceStateHistoryProvider` implementation (available in webapp deployments). Returns "not available" when no provider is present.
 
+**Security:** Tools are annotated `@RolesAllowed(IoTRoles.VIEWER)` (read tools) and `@RolesAllowed(IoTRoles.OPERATOR)` (command tool). Role constants are in `IoTRoles` (`casehub-iot-api`). Enforcement requires the host app to have a security extension (`quarkus-oidc`, `quarkus-security`) — in unsecured hosts (bridge), annotations are inert. All queries are tenancy-filtered via `McpIdentityContext`, which resolves the caller's tenant from `CurrentPrincipal` when available, falling back to `casehub.iot.tenancy-id` config. Cross-tenant admins (`CurrentPrincipal.isCrossTenantAdmin()`) bypass tenancy filtering across all four tools. Command audit events include `tenancyId` and the authenticated `actorId`.
+
 **Host-agnostic:** injects `DeviceRegistry` and `Instance<DeviceProvider>` -- sees whatever providers the host app configures.
+
+### MCP Resource Subscriptions
+
+IoT device state is exposed as subscribable MCP resources via platform's `McpResourceRegistry` SPI:
+- `iot://devices/{deviceId}/state` — per-device state with subscription support
+- `iot://devices/changes` — global change feed (bounded ring buffer)
+
+`IoTResourceRegistrar` registers resources at startup with template completion. `IoTStateChangeResourceObserver` fires MCP notifications on each `StateChangeEvent`.
+
+### KPI Endpoints
+
+REST endpoints for dashboard integration:
+- `GET /api/devices/kpi` — device statistics (online/offline counts, by class)
+- `GET /api/health/kpi` — system health metrics
+
+Used with `blocks-kpi-metric-row` web components via `hostPanel()`. KPI rows support auto-refresh via `refreshInterval` property.
+
+### Household Notifications
+
+Platform subscription engine integration for household event notifications. Device state changes produce `SubscribableEvent` instances into the notification DataSource, enabling user subscriptions to device events.
 
 ---
 

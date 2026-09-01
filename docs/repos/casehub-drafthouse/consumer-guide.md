@@ -79,7 +79,7 @@ DraftHouse exposes MCP tools in four groups. All tools return JSON strings. Erro
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `start_debate` | `specPath`, `agentId` | Start an adversarial debate session on a spec file. Registers REV and IMP agents. Returns `debateSessionId`, channel, reviewer info. |
+| `start_debate` | `specPath`, `agentId`, `autonomous` | Start an adversarial debate session on a spec file. Registers REV and IMP agents. Set `autonomous=true` for server-driven debate where agents respond automatically via ConversationOrchestrator. Returns `debateSessionId`, channel, reviewer info. |
 | `raise_point` | `debateSessionId`, `agentRole`, `round`, `content`, `priority`, `scope`, `location` | Raise a new debate point. Priority: P1/P2/P3. Scope: ISOLATED/SYSTEMIC. Returns `pointId`. |
 | `respond_to` | `debateSessionId`, `agentRole`, `round`, `pointId`, `entryType`, `content` | Respond to a point. Entry type: agree, dispute, qualify, counter, declined. |
 | `flag_human` | `debateSessionId`, `agentRole`, `round`, `pointId`, `reason` | Escalate a point for human review. |
@@ -119,7 +119,15 @@ DraftHouse exposes MCP tools in four groups. All tools return JSON strings. Erro
 | `mark_selected` | `sessionId`, `optionId` | Mark final selection. Converges the session. |
 | `end_brainstorm` | `sessionId` | End the brainstorming session. |
 
-**Total: 28 MCP tools.**
+### Pipeline Tools (`PipelineMcpTools`)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `start_pipeline` | `debateSessionId`, `dimensions` (JSON array), `ordered`, `specPath` | Create a review pipeline linking to a debate session. Starts a PipelineWatcher per dimension. |
+| `update_pipeline` | `pipelineId`, `action`, `dimension` (optional) | Update pipeline state: `checkpoint_reached`, `dimension_refused`, `dimension_accepted`, `crosscutting_started`, `pipeline_complete`. |
+| `load_decisions` | `pipelineId`, `decisionsPath` | Load brainstorming decisions from a decisions.md file into the pipeline. |
+
+**Total: 31 MCP tools.**
 
 ---
 
@@ -189,6 +197,8 @@ Uses the `casehub-pages-push` wire protocol (`PushMessage`). Supports subscribe/
 - `brainstorm-session-created` — new brainstorm session
 - `file-changed` — file modification notification
 - `workspace-progress` — live workspace watching progress
+- `autonomous-completed` — autonomous debate loop finished (reason, dispatchCount, durationMs)
+- `autonomous-failed` — autonomous debate loop failed (error)
 - `reconnected` — sent on WebSocket connect
 
 **Terminal WebSocket:** `WS /api/terminal?cols={cols}&rows={rows}` — PTY-over-WebSocket via pty4j (brainstorming mode only).
@@ -244,6 +254,7 @@ Topbar with controls, split main content (diff viewer + debate/review panels), s
 | Doc picker | `<doc-picker>` | Topbar document badge dropdown for A/B slot assignment |
 | Timeline | `<document-timeline>` | Document version timeline strip above diff panel |
 | Workspace status | `<workspace-status>` | Topbar live workspace watching progress indicator |
+| Review pipeline | `<review-pipeline>` | Pipeline progress dashboard — decisions, phase header, dimension cards (hidden by default, auto-shown on pipeline events) |
 
 ### Brainstorming Layout (`?mode=brainstorm`)
 

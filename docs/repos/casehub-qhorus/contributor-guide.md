@@ -30,7 +30,7 @@
 Five categories across `api/`:
 
 - **`api/store/`** -- Data access (CRUD): blocking store interfaces with reader sub-interfaces; cross-tenant variants for administrative queries; structured query types in `api/store/query/`.
-- **`api/spi/`** -- Extension points: consumers replace policies, attestation, identity, projections, summaries, and protocols with custom beans via `@Alternative @Priority`.
+- **`api/spi/`** -- Extension points: consumers replace policies, attestation, identity, projections, summaries, protocols, and compliance posture with custom beans via `@Alternative @Priority`.
 - **`api/gateway/`** -- Integration contracts: channel backend hierarchy (`AgentChannelBackend`, `HumanParticipatingChannelBackend`, `HumanObserverChannelBackend`), `MessageObserver`, `ChannelActivityBroadcaster`, inbound normalisation (`InboundNormaliser`, `NormalisedMessage`, `InboundHumanMessage`), outbound messaging (`OutboundMessage`), delivery (`DeliveryGuarantee`, `DeliveryCursor`), lifecycle events (`ChannelInitialisedEvent`, `ChannelClosedEvent`, `CommitmentStateChangedEvent`).
 - **`api/channel/`, `api/message/`** -- Service facades and domain records: mutating facades (`ChannelManager`, `MessageDispatcher`, `ConsumerMessaging`, `TopicManager`, `MembershipManager`, `PresenceTracker`, `ReactionManager`) and reader interfaces (`ChannelReader`); domain records (`Channel`, `Message`, `MessageView`, `Commitment`, `ChannelSummary`, `Topic`, `Reaction`, etc.).
 - **`api/watchdog/`** -- Watchdog domain types: `WatchdogConditionType` (11 conditions), `Watchdog` record, `WatchdogAlertEvent`, `WatchdogAlertRouter` SPI, sealed `AlertContext` hierarchy with typed context records for each condition.
@@ -46,13 +46,14 @@ All channel writes flow through `MessageService.dispatch(MessageDispatch)`. Pipe
 1. **Paused check** -- `channel.paused()` rejects all writes
 2. **`AllowedWritersPolicy`** ACL -- checks `channel.allowedWriters()`
 3. **`RateLimiter`** -- per-channel and per-instance limits via in-memory counters
-4. **`ObligorTrustPolicy` SPI** -- invoked for COMMAND messages with named targets; bypassed for role/capability-prefixed targets
-5. **`MessageTypePolicy`** (via `StoredMessageTypePolicy`) -- enforces `allowedTypes`/`deniedTypes` from channel config
-6. **`CorrelationIntegrityChecker`** (advisory) -- validates `inReplyTo` references exist and `correlationId` matches; adds advisories to `DispatchResult`
-7. **`ProtocolEvaluation`** (advisory via `ProtocolRegistry`) -- evaluates channel protocols against recent message history
-8. **LAST_WRITE overwrite** -- for `LAST_WRITE` channels, replaces the previous value (version-aware)
-9. **`LedgerWriteService.record()`** -- creates `MessageLedgerEntry` with Merkle hash chain
-10. **`ChannelGateway.fanOut()`** -- delivers to backends and fires `MessageReceivedEvent` via observers
+4. **`RoutingBridge`** -- resolves `role:X` capability targets to specific agents via eidos `AgentSelector`; non-role targets bypass (zero overhead); per-channel trust threshold via `Channel.routingTrustThreshold()`
+5. **`ObligorTrustPolicy` SPI** -- invoked for COMMAND messages with named targets only; bypassed for PROPOSE (commissive, not directive), role/capability-prefixed targets, and system senders
+6. **`MessageTypePolicy`** (via `StoredMessageTypePolicy`) -- hard-enforces `allowedTypes`/`deniedTypes` for COMMAND, QUERY, and PROPOSE (obligation-creating types); advisory-only for all others
+7. **`CorrelationIntegrityChecker`** (advisory) -- validates `inReplyTo` references exist and `correlationId` matches; adds advisories to `DispatchResult`
+8. **`ProtocolEvaluation`** (advisory via `ProtocolRegistry`) -- evaluates channel protocols against recent message history
+9. **LAST_WRITE overwrite** -- for `LAST_WRITE` channels, replaces the previous value (version-aware)
+10. **`LedgerWriteService.record()`** -- creates `MessageLedgerEntry` with Merkle hash chain
+11. **`ChannelGateway.fanOut()`** -- delivers to backends and fires `MessageReceivedEvent` via observers
 
 There is no bypass path.
 

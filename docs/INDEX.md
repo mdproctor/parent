@@ -8,6 +8,7 @@
 | Audience | Start here | What you'll find |
 |----------|-----------|-----------------|
 | **App builder** — consuming platform capabilities | [Consumer Index](consumer-index.md) | Modules to depend on, APIs, SPIs to implement, configuration, quick start |
+| **Capability lookup** — find a specific capability | [Capability Index](capabilities.md) | Cross-repo capability-to-chunk routing for precise RAG retrieval |
 | **Platform builder** — modifying platform internals | [Contributor Index](contributor-index.md) | Architecture, internal SPIs, module structure, extension points |
 
 Both indexes link to per-repo guides aggregated via git subtree at `repos/<name>/`.
