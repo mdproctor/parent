@@ -39,8 +39,9 @@
 | **life** | 54 | Personal automation, household management | [API](../repos/casehub-life/api/) |
 | **soc** | 17 | Security operations, alert triage | [API](../repos/casehub-soc/api/) |
 | **fsitrading** | 11 | Financial services trading | [API](../repos/casehub-fsitrading/api/) |
+| **drafthouse** | 37 | Contract drafting, debate sessions, review pipelines | [API](../repos/casehub-drafthouse/api/) |
 
-**Total: 1,636 types across 18 repos**
+**Total: 1,673 types across 19 repos**
 
 ## Cross-Repo SPI Implementations
 
