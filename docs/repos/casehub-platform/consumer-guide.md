@@ -129,6 +129,34 @@ Callers inject `AgentProvider` — the `RoutingAgentProvider` dispatches to `Age
 
 **PdfOptions:** `title`, `author`, `createdAt`, `reportType`, `conformance` (default `PdfAConformance.PDFA_2_B`). Use `PdfOptions.defaults()` for basic conversion.
 
+### Document signing
+
+| Artifact | What it provides |
+|----------|------------------|
+| `casehub-platform-signing` | EU DSS 6.2-backed PAdES PDF signing + CAdES detached signatures. `DssDocumentSigningService` implements `DocumentSigningService`. `DssDocumentVerificationService` implements `DocumentVerificationService`. Classpath-activated — when absent, `NoOp*` defaults return `Optional.empty()` / `UNSIGNED` |
+
+**SPIs** (in `platform-api`, package `io.casehub.platform.api.signing.document`):
+- `DocumentSigningService.signPdf(byte[], SigningIdentity)` → `Optional<SignedDocument>` — PAdES embedded
+- `DocumentSigningService.signDetached(byte[], SigningIdentity)` → `Optional<DetachedSignature>` — CAdES .p7s
+- `DocumentVerificationService.verifyPdf(byte[])` → `DocumentVerificationResult`
+- `DocumentVerificationService.verifyDetached(byte[], byte[])` → `DocumentVerificationResult`
+
+**Configuration** (prefix `casehub.signing`):
+- `keystore-path` — path to PKCS#12 keystore (signing disabled when absent)
+- `keystore-password` — keystore password (resolved via `CredentialResolver` in production)
+- `keystore-type` — default `PKCS12`
+- `key-alias` — alias for the signing key (default: first alias in keystore)
+- `pades-profile` — `B_B`, `B_T` (default), `B_LT`, `B_LTA`
+- `tsa-url` — RFC 3161 TSA endpoint (required for B_T+; absent + B_T = fail)
+- `expiry-warning-days` — certificate expiry warning threshold (default 30). `CertificateExpiryEvent` CDI event fired when any keystore certificate is within this threshold. `@Scheduled` check every 6h
+- `trusted-list-url` — EU LOTL URL for Trusted List validation (e.g. `https://ec.europa.eu/tools/lotl/eu-lotl.xml`). When set, `DssDocumentVerificationService` validates signer certificates against the EU Trusted List. File-cached with 24h expiry. Disabled by default
+
+**Per-tenant keystores:** `TenantKeyStoreResolver` maps tenant IDs to dedicated PKCS#12 files. Unknown tenants fall back to the default keystore. Configure tenant keystores programmatically via `TenantKeyStoreConfig`.
+
+**Runtime rotation:** `KeyStoreRotationService` atomically swaps the active keystore without restart. Failed rotations (wrong password, missing file) keep the existing keystore — no downtime on bad config.
+
+**Profile enforcement:** B_T+ configured without TSA throws `IllegalStateException` — no silent downgrade to B_B.
+
 ---
 
 ## Key Abstractions and SPIs
@@ -286,7 +314,7 @@ Domain modules produce `SubscribableEvent` objects into the notification DataSou
 
 `AccessControlProvider` provides blocking access control with resource hierarchy inheritance. Group-based grants resolve via `GroupMembershipProvider`. Parent-child hierarchy with depth guard of 20.
 
-**ResourceId:** Type-safe resource identifier replacing raw `String resourceId`. `ResourceId.of(type, id)` creates a typed reference; `ResourceId.parse("case:123")` parses the `type:id` format. All ACL SPI methods now accept `ResourceId` instead of separate `resourceType` + `resourceId` parameters.
+**ResourceId:** Type-safe resource identifier replacing raw `String resourceId`. `new ResourceId(type, id)` creates a typed reference; `ResourceId.parse("case:123")` parses the `type:id` format; `ResourceId.fromString(value)` is an alias for `parse`. All ACL SPI methods now accept `ResourceId` instead of separate `resourceType` + `resourceId` parameters.
 
 **Action hierarchy:** `AclAction` enum: `READ`, `WRITE`, `ADMIN`, `CLAIM`. ADMIN implies WRITE implies READ -- a WRITE grant satisfies a READ check; an ADMIN grant satisfies both READ and WRITE. CLAIM is independent. `satisfiedBy()` and `deniedBy()` methods encode this hierarchy.
 
@@ -318,11 +346,9 @@ Domain modules produce `SubscribableEvent` objects into the notification DataSou
 
 **Label infrastructure:** `LabelRule` record with `name`, `condition` (CompiledExpression), `actions` (List<LabelAction>), `triggerEvents` (Set<String>, optional). Static `evaluate(rules, context)` and `evaluate(rules, context, event)` methods. `LabelAction` is a sealed interface with `Add(label)` and `Remove(label)` variants.
 
-### CaseMemoryStore
+### CaseMemoryStore (migrated)
 
-Cross-case semantic recall. `CaseMemoryStore` (blocking) provides `store`, `query`, `erase`. Domain isolation via `MemoryDomain` -- facts do not cross domain boundaries. `MemoryPermissions` enforces tenant access at the SPI layer. `@DefaultBean` is a silent no-op -- the system functions correctly without memory.
-
-Backend implementations live in casehub-neocortex, not this repo.
+The `CaseMemoryStore` SPI and related types (`MemoryDomain`, `MemoryPermissions`, `MemoryQuery`) migrated to casehub-neocortex. The `@DefaultBean` no-op (`NoOpCaseMemoryStore`) also lives in neocortex. Platform no longer owns memory abstractions — consume `casehub-neocortex-memory-api` directly.
 
 ### Credentials
 
@@ -365,7 +391,7 @@ Backend implementations live in casehub-neocortex, not this repo.
 
 **MCP infrastructure:**
 - `casehub_activate` — on-demand per-operation tool registration. Agents discover and activate tools at runtime instead of exposing all tools at startup.
-- **Resource subscriptions:** `McpResourceRegistry` SPI for registering subscribable MCP resources. `McpResourceSubscriptionManager` tracks subscriptions and fires notifications on resource changes.
+- **Resource subscriptions:** `McpResourceRegistry` SPI for registering subscribable MCP resources. `McpResourceRegistryBridge` tracks subscriptions and fires notifications on resource changes.
 - **Dynamic tool schema:** The operation catalog is injected into the `casehub_action` tool definition at runtime, providing contextual tool descriptions.
 - `@McpDomain` interfaces discovered directly with `@PlatformQuery`/`@PlatformMutation` annotations.
 
@@ -509,7 +535,7 @@ Backend implementations live in casehub-neocortex, not this repo.
 ## What This Repo Does NOT Do
 
 - **Domain logic.** No case definitions, work items, or business rules. Those live in consumer repos (ledger, work, engine, devtown, etc.).
-- **Memory backends.** `CaseMemoryStore` SPI is here; implementations (in-mem, JPA, SQLite, Mem0, Graphiti) live in casehub-neocortex.
+- **Memory.** `CaseMemoryStore` SPI and all implementations (in-mem, JPA, SQLite, Mem0, Graphiti) live in casehub-neocortex. Platform no longer owns memory abstractions.
 - **Preference writes without the editor module.** `PreferenceProvider` is permanently read-only. The `preferences-editor/` module provides the write path via `PreferenceStore`.
 - **Security enforcement beyond tenancy.** `CurrentPrincipal` provides identity. `@RolesAllowed` and full RBAC are Quarkus concerns, not platform concerns.
 - **Orchestration.** Event routing and subscription matching happen here. Case orchestration, planning, and execution live in casehub-engine.
