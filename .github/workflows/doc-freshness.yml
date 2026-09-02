@@ -16,7 +16,6 @@ jobs:
         with:
           repository: casehubio/parent
           path: .parent
-          token: ${{ secrets.GH_PAT }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
