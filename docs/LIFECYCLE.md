@@ -9,6 +9,7 @@ Every enum that represents lifecycle states must be registered here and follow t
 
 | State machine | Repo | States | Terminal check method |
 |---------------|------|--------|----------------------|
+| `CaseStatus` | `casehub-engine` | `STARTING`, `RUNNING`, `WAITING`, `SUSPENDED`, `COMPLETED`, `FAULTED`, `CANCELLED` (7) | `isTerminal()`, `isActive()` |
 | `PlanItemStatus` | `casehub-engine` | `PENDING`, `RUNNING`, `DELEGATED`, `SUSPENDED`, `COMPLETED`, `FAULTED`, `REJECTED`, `OBSOLETE`, `CANCELLED` (9) | `isTerminal()`, `isActive()` |
 | `WorkItemStatus` | `casehub-work` | `PENDING`, `ASSIGNED`, `IN_PROGRESS`, `DELEGATED`, `SUSPENDED`, `COMPLETED`, `REJECTED`, `FAULTED`, `CANCELLED`, `EXPIRED`, `ESCALATED`, `OBSOLETE` (12) | `isTerminal()`, `isActive()` |
 | `CommitmentState` | `casehub-qhorus` | `OPEN`, `ACKNOWLEDGED`, `FULFILLED`, `DECLINED`, `FAILED`, `DELEGATED`, `EXPIRED` (7) | `isTerminal()`, `isActive()` |
@@ -74,5 +75,6 @@ When introducing a new lifecycle enum in any CaseHub repo:
 - `work#240` — lifecycle alignment: added `FAULTED`, `SUSPENDED`, `OBSOLETE` to `WorkItemStatus`; renamed `CREATED`→`PENDING`, `CLAIMED`→`ASSIGNED`; added `isActive()`
 - `qhorus#309` — `CommitmentState` missing `isActive()` — lifecycle protocol compliance
 - `work#279` — `GroupStatus` retroactive registration; `isTerminal()` / `isActive()` added, persisted on WorkItemSpawnGroup
+- `work#384` — `CaseStatus` lifecycle registration; `isTerminal()` / `isActive()` added as prerequisite for saga compensation states
 - `platform/capability-ownership.md` — Durable PlanItem status row
 - `platform/overlap-risks.md` — CommitmentState.DELEGATED vs WorkItemStatus.DELEGATED

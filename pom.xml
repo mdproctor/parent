@@ -1187,6 +1187,16 @@
         <artifactId>quarkmind-agent</artifactId>
         <version>${casehub.version}</version>
       </dependency>
+            <dependency>
+                <groupId>io.casehub</groupId>
+                <artifactId>casehub-platform-yaml-core</artifactId>
+                <version>${casehub.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.casehub</groupId>
+                <artifactId>casehub-platform-yaml-jackson</artifactId>
+                <version>${casehub.version}</version>
+            </dependency>
 
     </dependencies>
   </dependencyManagement>
