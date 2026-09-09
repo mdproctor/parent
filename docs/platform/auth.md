@@ -69,6 +69,10 @@ Role names used in `@RolesAllowed` annotations are CaseHub group names. Role nam
 | Role name | Harness | What it gates |
 |---|---|---|
 | `admin` | `casehub-devtown` | `MemoryAdminResource` — internal memory store admin operations |
+| `compliance-officers` | `casehub-aml` | SAR compliance review WorkItems |
+| `aml-compliance` | `casehub-aml` | Gate approval (ACCOUNT_RESTRICTION, TRANSACTION_BLOCKING, ENTITY_LINK_CREATION), suspend/resume |
+| `aml-mlro` | `casehub-aml` | SAR_FILING gate (exclusive), suspend/resume |
+| `aml-senior-compliance` | `casehub-aml` | LAW_ENFORCEMENT_REFERRAL gate, GDPR erasure |
 
 **Convention:** role names are lowercase, domain-prefixed when ambiguous (e.g. `devtown-admin` if `admin` becomes overloaded).
 
