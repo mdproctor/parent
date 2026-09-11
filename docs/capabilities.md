@@ -73,7 +73,7 @@
 | Capability | What it does | Consumer chunk | Repo |
 |------------|-------------|----------------|------|
 | Chat platforms | Slack, Discord, Teams, email | repos/casehub-connectors/capabilities/chat-platforms.md | connectors |
-| Worker runtimes | HTTP, Camel, MCP, K8s, GitHub Actions, Script | repos/casehub-workers/capabilities/runtimes.md | workers |
+| Worker runtimes | HTTP, Camel, MCP, K8s, GitHub Actions, Script, Scenario | repos/casehub-workers/capabilities/runtimes.md | workers |
 | IoT devices | Device abstraction (Matter-aligned), HA + OpenHAB | repos/casehub-iot/capabilities/devices.md | iot |
 | Event streams | Kafka, AMQP, Webhook, Poll, Camel connectors | repos/casehub-platform/capabilities/streams.md | platform |
 

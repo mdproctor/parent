@@ -62,7 +62,7 @@ Single-module library: 6 packages (channel, conversation, agentic with 9 sub-pac
 16 modules · depends on: platform-api · depended on by: devtown, openclaw, chat-app
 
 ### Workers (execution runtimes)
-8 modules: HTTP, Camel, MCP, K8s, GitHub Actions, Script backends. Four-class pattern (Runtime, Resolver, ExecutionManager, FaultEventHandler)
+9 modules: HTTP, Camel, MCP, K8s, GitHub Actions, Script, Scenario backends. Four-class pattern (Runtime, Resolver, ExecutionManager, FaultEventHandler)
 → [repos/casehub-workers/contributor-guide.md](repos/casehub-workers/contributor-guide.md)
 8 modules · depends on: worker-api, engine-api · depended on by: engine
 

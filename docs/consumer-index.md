@@ -85,7 +85,7 @@ Key components: `split-workbench`, `work-item-inbox`, `channel-feed`, `trust-sco
 → [repos/casehub-connectors/consumer-guide.md](repos/casehub-connectors/consumer-guide.md)
 Key types: `Connector`, `InboundConnector`, `ConnectorDiscovery`, `ChatPlatform`, `CalendarPlatform`
 
-**Workers** — HTTP, Camel, MCP, K8s, GitHub Actions, Script worker runtimes + dispatch
+**Workers** — HTTP, Camel, MCP, K8s, GitHub Actions, Script, Scenario worker runtimes + dispatch
 → [repos/casehub-workers/consumer-guide.md](repos/casehub-workers/consumer-guide.md)
 Key types: `WorkerRuntime`, `EndpointResolver`, `ExecutionManager`, `FaultEventHandler`
 
