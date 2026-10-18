@@ -72,6 +72,12 @@
         <version>${quarkus-quinoa.version}</version>
       </dependency>
 
+      <!-- OpenTelemetry — add to app pom to activate foundation spans -->
+      <dependency>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-opentelemetry</artifactId>
+      </dependency>
+
       <!-- Jackson 3.x — MCP SDK 2.0.0 pulls 3.0.3, jsonschema2pojo pulls 3.0.2 -->
       <dependency>
         <groupId>tools.jackson.core</groupId>

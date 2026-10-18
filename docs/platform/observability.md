@@ -16,6 +16,43 @@ Every ledger entry carries the trace ID of the request that created it. This lin
 - Worker execution paths (casehub-worker)
 - Case lifecycle events (casehub-engine)
 
+## App Activation — Distributed Tracing
+
+Add one dependency to any CaseHub app to activate all foundation spans:
+
+```xml
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-opentelemetry</artifactId>
+</dependency>
+```
+
+Version is managed by the parent BOM — no `<version>` tag needed.
+
+**What lights up:** all foundation spans auto-activate when the SDK runtime is on the classpath:
+- `casehub-ledger` — `LedgerTraceListener` populates `traceId` at `@PrePersist`
+- `casehub-worker` — worker execution path spans
+- `casehub-qhorus` — message dispatch spans
+- `casehub-desiredstate` — reconciliation loop spans
+- `casehub-engine` — case lifecycle event spans
+
+**Dev profile:** disable tracing in dev to avoid exporter connection errors:
+
+```properties
+%dev.quarkus.otel.sdk.disabled=true
+```
+
+**Exporter config (production):**
+
+```properties
+# Jaeger / OTLP (default)
+quarkus.otel.exporter.otlp.traces.endpoint=http://jaeger:4317
+
+# Grafana Tempo
+quarkus.otel.exporter.otlp.traces.endpoint=http://tempo:4317
+quarkus.otel.exporter.otlp.traces.protocol=grpc
+```
+
 ## Audit Trails
 
 The platform maintains **dual audit trails** for lifecycle state machines:
