@@ -109,6 +109,13 @@ the interface and every implementation found across the platform.
 | api | `StaticSetStrategy` |
 | runtime-core | `ExpressionSetStrategy` |
 
+## CapabilityArea
+
+| Repo | Implementation |
+|------|---------------|
+| agency-core | `MemoryHygieneCapabilityArea` |
+| runtime-core | `AbstractCapabilityArea` |
+
 ## CapabilityHealth
 
 | Repo | Implementation |
@@ -143,6 +150,7 @@ the interface and every implementation found across the platform.
 |------|---------------|
 | api | `ScreeningOrchestrator` |
 | runtime | `CbrCaseRetainObserver` |
+| runtime-core | `ImprovementOutcomeEventCapture` |
 | runtime-core | `NoOpCaseOutcomeObserver` |
 
 ## CaseRetriever
@@ -763,6 +771,7 @@ the interface and every implementation found across the platform.
 | engine-support-core | `A2AWorkerFunctionProvider` |
 | engine-support-core | `FlowWorkerFunctionProvider` |
 | engine-support-core | `McpWorkerFunctionProvider` |
+| engine-support-core | `PlaybookWorkerFunctionProvider` |
 | engine-support-core | `ReActWorkerFunctionProvider` |
 
 ## WorkerProvisioner
