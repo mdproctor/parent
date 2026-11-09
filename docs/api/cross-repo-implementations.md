@@ -262,11 +262,36 @@ the interface and every implementation found across the platform.
 
 | Repo | Implementation |
 |------|---------------|
+| agency-core | `AggregationReasoner` |
+| agency-core | `BudgetAwareSummariser` |
+| agency-core | `DegradationAwareSummariser` |
+| agency-core | `HeuristicAggregationSummariser` |
 | agency-core | `HeuristicMessageSummariser` |
+| agency-core | `HeuristicProvisioningSummariser` |
+| agency-core | `HeuristicRoutingSummariser` |
 | agency-core | `LlmContentSummariser` |
+| agency-core | `NoOpHeuristicSummariser` |
+| agency-core | `ProvisioningReasoner` |
+| agency-core | `RoutingReasoner` |
 | agency-core | `TieredContentSummariser` |
 | summarisation | `VerbatimContentSummariser` |
 | summarisation-api | `VerbatimContentSummariser` |
+
+## CorpusReader
+
+| Repo | Implementation |
+|------|---------------|
+| corpus | `AccessTrackingReader` |
+| corpus-git | `GitCorpusReader` |
+
+## CorpusStore
+
+| Repo | Implementation |
+|------|---------------|
+| corpus | `CompositeCorpusStore` |
+| corpus | `FlatCorpusStore` |
+| corpus | `ZipCorpusStore` |
+| corpus-git | `GitCorpusStore` |
 
 ## CrossTenantChannelStore
 
@@ -436,6 +461,7 @@ the interface and every implementation found across the platform.
 | runtime | `MvelExpressionEngine` |
 | runtime-core | `JQExpressionEngine` |
 | runtime-core | `LambdaExpressionEngine` |
+| yaml-test-core | `DotPathExpressionEngine` |
 
 ## ExpressionEngineRegistry
 
@@ -572,6 +598,7 @@ the interface and every implementation found across the platform.
 
 | Repo | Implementation |
 |------|---------------|
+| corpus-management | `CorpusMetadataExtractor` |
 | rag-core | `YamlFrontmatterExtractor` |
 | rag-query-augmentation | `QueryAugmentingMetadataExtractor` |
 
@@ -740,6 +767,14 @@ the interface and every implementation found across the platform.
 |------|---------------|
 | runtime | `CdiVocabularyRegistry` |
 | runtime-core | `NoOpVocabularyRegistry` |
+
+## WatchableChangeSource
+
+| Repo | Implementation |
+|------|---------------|
+| corpus | `CompositeChangeSource` |
+| corpus | `FlatChangeSource` |
+| corpus-git | `GitChangeSource` |
 
 ## WatchdogStore
 
