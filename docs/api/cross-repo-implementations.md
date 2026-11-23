@@ -69,6 +69,7 @@ the interface and every implementation found across the platform.
 |------|---------------|
 | eidos-routing | `EngineAwareAgentSelector` |
 | runtime | `SimpleAgentSelector` |
+| runtime-core | `NoOpAgentSelector` |
 
 ## AgentStateStore
 
@@ -109,6 +110,13 @@ the interface and every implementation found across the platform.
 | api | `StaticSetStrategy` |
 | runtime-core | `ExpressionSetStrategy` |
 
+## CapabilityArea
+
+| Repo | Implementation |
+|------|---------------|
+| agency-core | `MemoryHygieneCapabilityArea` |
+| runtime-core | `AbstractCapabilityArea` |
+
 ## CapabilityHealth
 
 | Repo | Implementation |
@@ -143,6 +151,7 @@ the interface and every implementation found across the platform.
 |------|---------------|
 | api | `ScreeningOrchestrator` |
 | runtime | `CbrCaseRetainObserver` |
+| runtime-core | `ImprovementOutcomeEventCapture` |
 | runtime-core | `NoOpCaseOutcomeObserver` |
 
 ## CaseRetriever
@@ -155,7 +164,8 @@ the interface and every implementation found across the platform.
 | rag-crossencoder | `RerankingCaseRetriever` |
 | rag-expansion | `QueryExpandingCaseRetriever` |
 | rag-testing | `InMemoryCaseRetriever` |
-| rag-tracking | `TrackingCaseRetriever` |
+| rag-tracking | `TrackingCaseRetrieverDecorator` |
+| rag-tracking-core | `TrackingCaseRetriever` |
 
 ## CbrRetrievalTracker
 
@@ -210,6 +220,7 @@ the interface and every implementation found across the platform.
 | agency-core | `ConversationProtocol` |
 | agency-core | `JudgmentProtocol` |
 | agency-core | `NegotiationProtocol` |
+| playbook-bridge | `PlaybookChannelProtocol` |
 | runtime-core | `ContributionRequiredProtocol` |
 | runtime-core | `RequestResponseProtocol` |
 | runtime-core | `RoundRobinProtocol` |
@@ -254,11 +265,37 @@ the interface and every implementation found across the platform.
 
 | Repo | Implementation |
 |------|---------------|
+| agency-core | `AggregationReasoner` |
+| agency-core | `BudgetAwareSummariser` |
+| agency-core | `DegradationAwareSummariser` |
+| agency-core | `DistributedAgentReasoner` |
+| agency-core | `HeuristicAggregationSummariser` |
 | agency-core | `HeuristicMessageSummariser` |
+| agency-core | `HeuristicProvisioningSummariser` |
+| agency-core | `HeuristicRoutingSummariser` |
 | agency-core | `LlmContentSummariser` |
+| agency-core | `NoOpHeuristicSummariser` |
+| agency-core | `ProvisioningReasoner` |
+| agency-core | `RoutingReasoner` |
 | agency-core | `TieredContentSummariser` |
 | summarisation | `VerbatimContentSummariser` |
 | summarisation-api | `VerbatimContentSummariser` |
+
+## CorpusReader
+
+| Repo | Implementation |
+|------|---------------|
+| corpus | `AccessTrackingReader` |
+| corpus-git | `GitCorpusReader` |
+
+## CorpusStore
+
+| Repo | Implementation |
+|------|---------------|
+| corpus | `CompositeCorpusStore` |
+| corpus | `FlatCorpusStore` |
+| corpus | `ZipCorpusStore` |
+| corpus-git | `GitCorpusStore` |
 
 ## CrossTenantChannelStore
 
@@ -306,6 +343,9 @@ the interface and every implementation found across the platform.
 
 | Repo | Implementation |
 |------|---------------|
+| data-api | `InMemoryDataStore` |
+| data-sqlite | `SqliteDocumentDataStore` |
+| data-sqlite | `SqliteTypedDataStore` |
 | persistence-memory | `InMemoryDataStore` |
 | runtime | `JpaDataStore` |
 
@@ -428,6 +468,7 @@ the interface and every implementation found across the platform.
 | runtime | `MvelExpressionEngine` |
 | runtime-core | `JQExpressionEngine` |
 | runtime-core | `LambdaExpressionEngine` |
+| yaml-test-core | `DotPathExpressionEngine` |
 
 ## ExpressionEngineRegistry
 
@@ -564,6 +605,7 @@ the interface and every implementation found across the platform.
 
 | Repo | Implementation |
 |------|---------------|
+| corpus-management | `CorpusMetadataExtractor` |
 | rag-core | `YamlFrontmatterExtractor` |
 | rag-query-augmentation | `QueryAugmentingMetadataExtractor` |
 
@@ -621,7 +663,7 @@ the interface and every implementation found across the platform.
 | Repo | Implementation |
 |------|---------------|
 | rag-testing | `InMemoryRetrievalTracker` |
-| rag-tracking | `SqliteRetrievalTracker` |
+| rag-tracking-core | `SqliteRetrievalTracker` |
 
 ## RoutingSignalProvider
 
@@ -691,6 +733,7 @@ the interface and every implementation found across the platform.
 |------|---------------|
 | cognition | `CognitiveSystemPromptRenderer` |
 | runtime | `EidosSystemPromptRenderer` |
+| runtime-core | `NoOpSystemPromptRenderer` |
 
 ## TemplateRegistry
 
@@ -733,6 +776,14 @@ the interface and every implementation found across the platform.
 | runtime | `CdiVocabularyRegistry` |
 | runtime-core | `NoOpVocabularyRegistry` |
 
+## WatchableChangeSource
+
+| Repo | Implementation |
+|------|---------------|
+| corpus | `CompositeChangeSource` |
+| corpus | `FlatChangeSource` |
+| corpus-git | `GitChangeSource` |
+
 ## WatchdogStore
 
 | Repo | Implementation |
@@ -761,8 +812,10 @@ the interface and every implementation found across the platform.
 |------|---------------|
 | engine-adapter-core | `PatternWorkerFunctionProvider` |
 | engine-support-core | `A2AWorkerFunctionProvider` |
+| engine-support-core | `AgentWorkerFunctionProvider` |
 | engine-support-core | `FlowWorkerFunctionProvider` |
 | engine-support-core | `McpWorkerFunctionProvider` |
+| engine-support-core | `PlaybookWorkerFunctionProvider` |
 | engine-support-core | `ReActWorkerFunctionProvider` |
 
 ## WorkerProvisioner
